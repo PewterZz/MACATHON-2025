@@ -119,7 +119,7 @@ const getAIResponse = async (userMessage: string, conversationHistory: { sender:
     console.log('Sending messages to OpenAI:', JSON.stringify(messages, null, 2)); // Log the exact messages sent
     
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: messages as any, // Type assertion to satisfy OpenAI API typing
       temperature: 0.7,
       max_tokens: 250,
