@@ -74,9 +74,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw insertError
         } else {
           console.log('Profile created successfully:', insertData)
-          
-          // Force a profile refresh after creation
-          router.refresh()
           return insertData
         }
       } else if (profileError) {
@@ -130,8 +127,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 try {
                   await ensureProfileExists(newUser)
                   setUser(newUser)
-                  // Force refresh after successful login and profile creation
-                  router.refresh()
+                  // Only refresh router after successful profile creation, not on every token refresh
+                  if (event === 'SIGNED_IN') {
+                    router.push('/dashboard')
+                  }
                 } catch (error) {
                   console.error('Error ensuring profile exists during auth change:', error)
                   setUser(newUser)
@@ -184,8 +183,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('Sign in successful, ensuring profile exists for', data.user.id)
         await ensureProfileExists(data.user)
         
-        // Force refresh to ensure UI updates
-        router.refresh()
+        // Let the auth state change handler handle navigation
+        // The router.push will happen in the auth state change event
       }
       
       return data

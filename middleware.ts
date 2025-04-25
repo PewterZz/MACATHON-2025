@@ -11,7 +11,11 @@ export async function middleware(req: NextRequest) {
     req.nextUrl.pathname === '/email-sent' ||
     req.nextUrl.pathname.startsWith('/api/') || 
     req.nextUrl.pathname.startsWith('/_next/') || 
-    req.nextUrl.pathname.startsWith('/auth/');
+    req.nextUrl.pathname.startsWith('/auth/') ||
+    req.nextUrl.pathname.includes('.woff2') ||
+    req.nextUrl.pathname.includes('.ttf') ||
+    req.nextUrl.pathname.includes('.css') ||
+    req.nextUrl.pathname.includes('.js');
 
   // Auth paths that should redirect authenticated users
   const isAuthPath = 
@@ -27,6 +31,13 @@ export async function middleware(req: NextRequest) {
     !req.nextUrl.pathname.includes('.');
   
   try {
+    // Skip auth checks for static resources to prevent infinite loops
+    if (req.nextUrl.pathname.includes('static') || 
+        req.nextUrl.pathname.includes('media') ||
+        req.nextUrl.pathname.includes('.woff2')) {
+      return res;
+    }
+    
     const supabase = createMiddlewareClient({ 
       req, 
       res,
@@ -41,25 +52,12 @@ export async function middleware(req: NextRequest) {
         }
       }
     });
+    
     const { data: { session } } = await supabase.auth.getSession();
     
     // For authentication paths: if user is already logged in, redirect to dashboard
     if (session && isAuthPath) {
-      // Check if the user has a profile before redirecting to dashboard
-      try {
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('id', session.user.id)
-          .single();
-        
-        // Only redirect if profile exists
-        if (profile && !error) {
-          return NextResponse.redirect(new URL('/dashboard', req.url));
-        }
-      } catch (profileError) {
-        console.error('Error checking profile in middleware:', profileError);
-      }
+      return NextResponse.redirect(new URL('/dashboard', req.url));
     }
     
     // For protected paths: if user is not logged in, redirect to sign in
@@ -71,18 +69,17 @@ export async function middleware(req: NextRequest) {
   } catch (error) {
     console.error('Middleware error:', error);
     
-    // In case of error:
-    // - Don't redirect from public paths
+    // In case of error, don't redirect from public paths or static assets
     if (isPublicPath) {
       return res;
     }
     
-    // - Don't redirect from auth paths, let them work normally
+    // Don't redirect from auth paths, let them work normally
     if (isAuthPath) {
       return res;
     }
     
-    // - For protected paths, redirect to sign in
+    // For protected paths, redirect to sign in
     if (isProtectedPath) {
       return NextResponse.redirect(new URL('/signin', req.url));
     }

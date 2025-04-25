@@ -33,7 +33,6 @@ export default function SignIn() {
 
     try {
       await signIn(email, password)
-      router.push("/dashboard")
     } catch (error) {
       console.error("Sign in failed:", error)
       toast({
