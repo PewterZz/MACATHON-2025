@@ -5,17 +5,32 @@ import type { NextRequest } from 'next/server';
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
   
+  // Always allow static resources and API routes to pass through without auth checks
+  // This prevents infinite loops when loading resources
+  if (
+    req.nextUrl.pathname.includes('/_next/static/') ||
+    req.nextUrl.pathname.includes('/_next/image/') ||
+    req.nextUrl.pathname.includes('/_next/data/') ||
+    req.nextUrl.pathname.includes('/static/') ||
+    req.nextUrl.pathname.includes('/media/') ||
+    req.nextUrl.pathname.includes('.woff2') ||
+    req.nextUrl.pathname.includes('.ttf') ||
+    req.nextUrl.pathname.includes('.svg') ||
+    req.nextUrl.pathname.includes('.png') ||
+    req.nextUrl.pathname.includes('.jpg') ||
+    req.nextUrl.pathname.includes('.css') ||
+    req.nextUrl.pathname.includes('.js')
+  ) {
+    return res;
+  }
+  
   // Public paths that should never redirect users regardless of auth state
   const isPublicPath = 
     req.nextUrl.pathname === '/' || 
     req.nextUrl.pathname === '/email-sent' ||
     req.nextUrl.pathname.startsWith('/api/') || 
     req.nextUrl.pathname.startsWith('/_next/') || 
-    req.nextUrl.pathname.startsWith('/auth/') ||
-    req.nextUrl.pathname.includes('.woff2') ||
-    req.nextUrl.pathname.includes('.ttf') ||
-    req.nextUrl.pathname.includes('.css') ||
-    req.nextUrl.pathname.includes('.js');
+    req.nextUrl.pathname.startsWith('/auth/');
 
   // Auth paths that should redirect authenticated users
   const isAuthPath = 
@@ -27,17 +42,9 @@ export async function middleware(req: NextRequest) {
   const isProtectedPath = 
     !isPublicPath && 
     !isAuthPath &&
-    !req.nextUrl.pathname.startsWith('/api') &&
-    !req.nextUrl.pathname.includes('.');
+    !req.nextUrl.pathname.startsWith('/api');
   
   try {
-    // Skip auth checks for static resources to prevent infinite loops
-    if (req.nextUrl.pathname.includes('static') || 
-        req.nextUrl.pathname.includes('media') ||
-        req.nextUrl.pathname.includes('.woff2')) {
-      return res;
-    }
-    
     const supabase = createMiddlewareClient({ 
       req, 
       res,
@@ -69,7 +76,7 @@ export async function middleware(req: NextRequest) {
   } catch (error) {
     console.error('Middleware error:', error);
     
-    // In case of error, don't redirect from public paths or static assets
+    // In case of error, don't redirect from public paths
     if (isPublicPath) {
       return res;
     }
@@ -99,7 +106,7 @@ export const config = {
     '/auth/:path*',
     '/reset-password',
     '/email-sent',
-    // Exclude static files and API routes (except auth)
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.svg|logo.png|styles|public).*)',
+    // List specific paths instead of using negative lookahead with capturing groups
+    '/:path*',
   ],
 }; 

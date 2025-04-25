@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const ensureProfileExists = async (user: User) => {
     if (!user || !user.id) {
       console.error('Cannot create profile: Missing user or user ID')
-      return
+      throw new Error('User or user ID is missing')
     }
     
     try {
@@ -41,6 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       console.log('Profile check result:', { existingProfile, error: profileError?.message })
 
+      // If profile already exists, return it immediately
+      if (existingProfile) {
+        console.log('Profile already exists:', existingProfile)
+        return existingProfile
+      }
+
       // If no profile found (404 error), create one
       if (profileError && (profileError.code === 'PGRST116' || profileError.message.includes('not found'))) {
         console.log('No profile found, creating new profile for user', user.id)
@@ -53,35 +59,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Extract role from metadata or default to user
         const isHelper = user.user_metadata?.role === 'helper' || false
         
-        console.log('Creating profile with data:', {
+        const profileData = {
           id: user.id,
           name: userName,
-          is_helper: isHelper
-        })
+          is_helper: isHelper,
+          helper_score: 0
+        }
+        
+        console.log('Creating profile with data:', profileData)
         
         const { data: insertData, error: insertError } = await supabase
           .from('profiles')
-          .insert({
-            id: user.id,
-            name: userName,
-            is_helper: isHelper,
-            helper_score: 0
-          })
+          .insert(profileData)
           .select()
+          .single()
         
         if (insertError) {
           console.error('Error creating profile:', insertError)
+          
+          // Check if profile was actually created despite error
+          // (this can happen with race conditions)
+          const { data: checkAgain } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+            
+          if (checkAgain) {
+            console.log('Profile exists after insert error (likely race condition):', checkAgain)
+            return checkAgain
+          }
+          
           throw insertError
-        } else {
+        } else if (insertData) {
           console.log('Profile created successfully:', insertData)
           return insertData
+        } else {
+          throw new Error('Profile creation returned no data')
         }
       } else if (profileError) {
         console.error('Error checking profile:', profileError)
         throw profileError
       } else {
-        console.log('Profile already exists:', existingProfile)
-        return existingProfile
+        console.log('Profile exists but data is null, this is unexpected')
+        throw new Error('Profile exists but data is null')
       }
     } catch (err) {
       console.error('Error in ensureProfileExists:', err)

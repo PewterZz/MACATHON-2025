@@ -51,7 +51,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
       }
 
       // If no profile was found (404 error) and we have a user, create one
-      if (fetchError && fetchError.code === 'PGRST116') {
+      if (fetchError && (fetchError.code === 'PGRST116' || fetchError.message.includes('not found'))) {
         console.log('Profile not found, creating a new one for user:', user.id)
         
         // Extract name from metadata or email
@@ -60,19 +60,53 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
         // Check if role is specified in metadata
         const isHelper = user.user_metadata?.role === 'helper' || false
         
+        const profileData = {
+          id: user.id,
+          name: userName,
+          is_helper: isHelper,
+          helper_score: 0 // Always insert 0, column is NOT NULL
+        }
+        
+        // Add debounce to avoid race conditions with multiple simultaneous inserts
+        await new Promise(resolve => setTimeout(resolve, 300))
+        
+        // Check one more time before inserting (to avoid race conditions)
+        const { data: doubleCheck } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single()
+          
+        if (doubleCheck) {
+          console.log('Profile found on double-check:', doubleCheck.id)
+          setProfile(doubleCheck)
+          setError(null)
+          return
+        }
+        
         const { data: newProfile, error: insertError } = await supabase
           .from('profiles')
-          .insert({
-            id: user.id,
-            name: userName,
-            is_helper: isHelper,
-            helper_score: 0 // Always insert 0, column is NOT NULL
-          })
+          .insert(profileData)
           .select()
           .single()
 
         if (insertError) {
           console.error('Error creating profile:', insertError)
+          
+          // Final check in case profile was created despite error
+          const { data: finalCheck } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+            
+          if (finalCheck) {
+            console.log('Profile found after insert error:', finalCheck.id)
+            setProfile(finalCheck)
+            setError(null)
+            return
+          }
+          
           throw insertError
         }
 

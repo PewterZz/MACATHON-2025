@@ -9,8 +9,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  optimizeFonts: true,
   experimental: {
-    optimizeFonts: true,
   },
   webpack: (config) => {
     config.resolve.fallback = {
