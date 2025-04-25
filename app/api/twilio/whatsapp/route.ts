@@ -59,7 +59,7 @@ const getConversationHistory = async (requestId: number): Promise<{ sender: stri
       .from('messages')
       .select('sender, content') // Keep sender
       .eq('request_id', requestId)
-      .order('created_at', { ascending: true });
+      // .order('created_at', { ascending: true }); // Removed ordering as column doesn't exist
     
     if (error) {
       console.error('Error fetching conversation history from Supabase:', error);
