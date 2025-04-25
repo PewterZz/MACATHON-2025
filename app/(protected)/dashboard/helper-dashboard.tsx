@@ -25,6 +25,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import type { LucideIcon, LucideProps } from 'lucide-react'
 import { ForwardRefExoticComponent, RefAttributes } from 'react'
 import { cn } from "@/lib/utils"
+import ChatPanel from "@/components/ChatPanel"
 
 // Animation variants for tab content
 const tabContentVariants = {
@@ -87,13 +88,6 @@ interface RequestCardProps {
   className?: string;
 }
 
-// Update the ChatPanel props interface
-interface ChatPanelProps {
-  requestId: string;
-  onClose: () => void;
-  isHelper: boolean;
-}
-
 // Update the Supabase types
 type Tables = Database['public']['Tables']
 type RequestRow = Tables['requests']['Row']
@@ -143,19 +137,6 @@ export const RequestCard = ({ request, onClaim, className }: RequestCardProps) =
       >
         Claim Request
       </button>
-    </div>
-  );
-};
-
-export const ChatPanel = ({ requestId, onClose, isHelper }: ChatPanelProps) => {
-  return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-white border-l shadow-lg">
-      <div className="p-4">
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
-          Close
-        </button>
-      </div>
-      {/* Chat content will go here */}
     </div>
   );
 };
@@ -812,11 +793,21 @@ export default function HelperDashboard() {
                 
                 <div className="lg:col-span-2">
                   {activeChat ? (
-                    <ChatPanel
-                      requestId={activeChat}
-                      onClose={() => handleCloseChat(activeChat)}
-                      isHelper={true}
-                    />
+                    <div className="relative h-full">
+                      <div className="absolute top-2 right-2 z-10">
+                        <Button 
+                          variant="outline" 
+                          size="icon" 
+                          className="bg-slate-700 text-slate-200 border-slate-600 hover:bg-slate-600"
+                          onClick={() => handleCloseChat(activeChat)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        </Button>
+                      </div>
+                      <ChatPanel
+                        chatId={activeChat}
+                      />
+                    </div>
                   ) : (
                     <Card className="bg-slate-800 border-slate-700 h-full flex items-center justify-center">
                       <CardContent className="text-center p-8">

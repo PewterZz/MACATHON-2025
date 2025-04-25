@@ -49,7 +49,7 @@ export function useChat(requestId?: string) {
               channel: 'web',
               status: 'open',
               summary: 'Web chat session',
-              created_by: user?.id
+              user_id: user?.id
             })
             .select()
             .single()
@@ -122,7 +122,7 @@ export function useChat(requestId?: string) {
           // For students, check if they created this request
           const { data: requestData, error: requestError } = await client
             .from('requests')
-            .select('created_by')
+            .select('user_id')
             .eq('id', currentRequestId)
             .single()
 
@@ -137,11 +137,11 @@ export function useChat(requestId?: string) {
           
           console.log('Student request access check:', {
             requestId: currentRequestId,
-            createdBy: requestData.created_by,
+            createdBy: requestData.user_id,
             currentUserId: user.id
           })
           
-          if (requestData.created_by !== user.id) {
+          if (requestData.user_id !== user.id) {
             throw new Error("You don't have permission to access this chat.")
           }
         }
