@@ -35,7 +35,8 @@ export async function middleware(req: NextRequest) {
     req.nextUrl.pathname === '/email-sent' ||
     req.nextUrl.pathname.startsWith('/api/') || 
     req.nextUrl.pathname.startsWith('/_next/') || 
-    req.nextUrl.pathname.startsWith('/auth/');
+    req.nextUrl.pathname.startsWith('/auth/') ||
+    req.nextUrl.pathname.startsWith('/chat/anonymous/');
 
   // Auth paths that should redirect authenticated users
   const isAuthPath = 

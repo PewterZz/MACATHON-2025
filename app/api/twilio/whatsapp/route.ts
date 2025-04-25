@@ -122,7 +122,7 @@ const getAIResponse = async (userMessage: string, conversationHistory: { sender:
       model: "gpt-4o",
       messages: messages as any, // Type assertion to satisfy OpenAI API typing
       temperature: 0.7,
-      max_tokens: 250,
+      max_tokens: 350,
     });
     
     let aiResponse = response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
