@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { createSupabaseClient } from "@/lib/supabase"
 import { User } from "@supabase/supabase-js"
+import { useRouter } from "next/navigation"
 
 interface AuthContextType {
   user: User | null
@@ -19,6 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const supabase = createSupabaseClient()
+  const router = useRouter()
 
   // Function to ensure a profile exists for the user
   const ensureProfileExists = async (user: User) => {
@@ -61,21 +63,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    let isMounted = true;
+    const client = createSupabaseClient();
+    
     const checkAuth = async () => {
       try {
-        const { data } = await supabase.auth.getSession()
+        const { data } = await client.auth.getSession()
         const currentUser = data.session?.user ?? null
         
-        setUser(currentUser)
-        
-        // If user is logged in, ensure they have a profile
-        if (currentUser) {
-          await ensureProfileExists(currentUser)
+        if (isMounted) {
+          setUser(currentUser)
+          
+          // If user is logged in, ensure they have a profile
+          if (currentUser) {
+            await ensureProfileExists(currentUser)
+          }
         }
         
-        const { data: authListener } = supabase.auth.onAuthStateChange(
+        const { data: authListener } = client.auth.onAuthStateChange(
           async (event, session) => {
             console.log('Auth state changed:', event, session?.user?.id)
+            if (!isMounted) return;
+            
             const newUser = session?.user ?? null
             setUser(newUser)
             
@@ -92,12 +101,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error("Auth check failed:", error)
       } finally {
-        setIsLoading(false)
+        if (isMounted) {
+          setIsLoading(false)
+        }
       }
     }
 
     checkAuth()
-  }, [supabase])
+    
+    return () => {
+      isMounted = false;
+    }
+  }, [])
 
   const signIn = async (email: string, password: string) => {
     setIsLoading(true)
@@ -123,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
 
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -135,6 +150,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         throw error
       }
+      
+      // Don't wait for email confirmation to complete signUp function
+      return data
     } catch (error) {
       console.error("Sign up failed:", error)
       throw error
@@ -145,22 +163,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try {
-      // First call Supabase signOut
-      await supabase.auth.signOut()
+      // Set loading state to prevent re-renders during signout
+      setIsLoading(true)
       
-      // Manually clear the user state
+      // First manually clear the user state to prevent re-renders
       setUser(null)
       
-      // Clear any other auth-related state or local storage if needed
+      // Clear any auth-related state or local storage
       if (typeof window !== 'undefined') {
         // Clear any auth-related local storage items
         localStorage.removeItem('supabase.auth.token')
-        
-        // Clear any other auth-related local storage items you might have
-        // Example: localStorage.removeItem('user-profile')
+        // Remove any custom cached data
+        localStorage.removeItem('cached_profile')
+        localStorage.removeItem('cached_user_session')
       }
+      
+      // Finally call Supabase signOut
+      await supabase.auth.signOut()
+      
+      // Redirect to signin page after successful signout
+      router.push('/signin')
     } catch (error) {
       console.error("Sign out failed:", error)
+      setIsLoading(false)
     }
   }
 

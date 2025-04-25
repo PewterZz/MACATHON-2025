@@ -18,7 +18,6 @@ export function useChat(requestId?: string) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [currentRequestId, setCurrentRequestId] = useState<string>(requestId || '')
-  const supabase = createSupabaseClient()
   const { user } = useAuth()
   const { profile } = useProfile()
   const isHelper = profile?.is_helper || false
@@ -44,7 +43,7 @@ export function useChat(requestId?: string) {
       try {
         if (!requestId) {
           // Create new request if no ID provided
-          const { data: newRequest, error: createError } = await supabase
+          const { data: newRequest, error: createError } = await createSupabaseClient()
             .from('requests')
             .insert({
               channel: 'web',
@@ -83,6 +82,8 @@ export function useChat(requestId?: string) {
   useEffect(() => {
     if (!currentRequestId || !user) return
 
+    const client = createSupabaseClient()
+    
     const fetchMessages = async () => {
       try {
         setIsLoading(true)
@@ -91,7 +92,7 @@ export function useChat(requestId?: string) {
         // Check permissions based on user type
         if (isHelper) {
           // For helpers, check if they have claimed this request
-          const { data: requestData, error: requestError } = await supabase
+          const { data: requestData, error: requestError } = await client
             .from('requests')
             .select('claimed_by, status')
             .eq('id', currentRequestId)
@@ -119,7 +120,7 @@ export function useChat(requestId?: string) {
           }
         } else {
           // For students, check if they created this request
-          const { data: requestData, error: requestError } = await supabase
+          const { data: requestData, error: requestError } = await client
             .from('requests')
             .select('created_by')
             .eq('id', currentRequestId)
@@ -146,7 +147,7 @@ export function useChat(requestId?: string) {
         }
 
         // Fetch messages
-        const { data, error: messagesError } = await supabase
+        const { data, error: messagesError } = await client
           .from('messages')
           .select('*')
           .eq('request_id', currentRequestId)
@@ -173,18 +174,26 @@ export function useChat(requestId?: string) {
         setError(new Error(errorMessage))
         console.error("Error fetching messages:", err)
       } finally {
-        setIsLoading(false)
+        if (isMounted) {
+          setIsLoading(false)
+        }
       }
     }
 
+    let isMounted = true
     fetchMessages()
+
+    return () => {
+      isMounted = false
+    }
   }, [currentRequestId, user, isHelper])
 
   // Set up realtime subscription
   useEffect(() => {
     if (!currentRequestId) return
 
-    const channel = supabase
+    const client = createSupabaseClient()
+    const channel = client
       .channel(`messages:${currentRequestId}`)
       .on(
         'postgres_changes',
@@ -211,7 +220,7 @@ export function useChat(requestId?: string) {
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      client.removeChannel(channel)
     }
   }, [currentRequestId])
 
@@ -225,7 +234,7 @@ export function useChat(requestId?: string) {
       throw new Error("No active request")
     }
 
-    if (!supabase) {
+    if (!createSupabaseClient()) {
       throw new Error("Supabase client not initialized")
     }
 
@@ -235,7 +244,7 @@ export function useChat(requestId?: string) {
       content: content.trim()
     })
 
-    const { data, error } = await supabase
+    const { data, error } = await createSupabaseClient()
       .from('messages')
       .insert({
         request_id: currentRequestId,
@@ -255,7 +264,7 @@ export function useChat(requestId?: string) {
     }
 
     return data.id
-  }, [currentRequestId, supabase])
+  }, [currentRequestId])
 
   return { messages, isLoading, error, sendMessage, requestId: currentRequestId }
 }

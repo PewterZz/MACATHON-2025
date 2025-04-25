@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,12 @@ import { createSupabaseClient } from "@/lib/supabase"
 import { toast } from "@/components/ui/use-toast"
 
 export default function EmailSent() {
-  const [email, setEmail] = useState("")
+  const [email, setEmail] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('signupEmail') || ""
+    }
+    return ""
+  })
   const [isLoading, setIsLoading] = useState(false)
   const supabase = createSupabaseClient()
 
@@ -53,6 +58,14 @@ export default function EmailSent() {
       setIsLoading(false)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('signupEmail')
+      }
+    }
+  }, [])
 
   return (
     <Card className="w-full bg-slate-800 border-slate-700 text-center">

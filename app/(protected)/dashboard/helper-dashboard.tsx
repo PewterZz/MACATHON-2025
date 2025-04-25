@@ -300,6 +300,22 @@ export default function HelperDashboard() {
     refreshHistory()
   }
 
+  const handleSignOut = async () => {
+    try {
+      setRefreshingClaimed(true);
+      await router.push('/signin');
+      await signOut();
+    } catch (error) {
+      console.error("Sign out failed:", error);
+      setRefreshingClaimed(false);
+      toast({
+        title: "Error",
+        description: "Failed to sign out. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
   const historyColumns = [
     { accessorKey: "issue", header: "Issue" },
     { accessorKey: "outcome", header: "Outcome" },
@@ -416,7 +432,11 @@ export default function HelperDashboard() {
           </div>
           
           <div className="absolute bottom-4 left-4 right-4">
-            <Button variant="ghost" className="w-full justify-start text-slate-300 hover:text-slate-100 hover:bg-slate-700" onClick={signOut}>
+            <Button 
+              variant="ghost" 
+              className="w-full justify-start text-slate-300 hover:text-slate-100 hover:bg-slate-700" 
+              onClick={handleSignOut}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               <span>Sign Out</span>
             </Button>

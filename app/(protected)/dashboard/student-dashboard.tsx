@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -116,15 +116,10 @@ export default function StudentDashboard() {
     }
   }, [profile?.name, profile?.contact_email, user?.email])
 
-  // Fetch existing requests when component mounts
-  useEffect(() => {
-    if (user?.id) {
-      fetchUserRequests()
-      fetchUserStats()
-    }
-  }, [user?.id])
+  // 1. Define both functions with useCallback BEFORE the useEffect that references them
 
-  const fetchUserStats = async () => {
+  // Fetch user stats (number of requests)
+  const fetchUserStats = useCallback(async () => {
     if (!user?.id) return
     
     try {
@@ -140,9 +135,10 @@ export default function StudentDashboard() {
     } catch (error) {
       console.error("Failed to fetch user stats:", error)
     }
-  }
+  }, [user?.id])
 
-  const fetchUserRequests = async () => {
+  // Fetch existing user requests
+  const fetchUserRequests = useCallback(async () => {
     if (!user?.id) return
     
     try {
@@ -160,18 +156,19 @@ export default function StudentDashboard() {
         .order('created_at', { ascending: false })
       
       if (error) {
+        // Safely log the error, handling the case where error might be an empty object
         console.error("Supabase error fetching requests:", error, {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
+          message: error?.message || 'No error message',
+          details: error?.details || 'No details',
+          hint: error?.hint || 'No hint',
+          code: error?.code || 'No code'
         })
         
         // Check if it's a connection error
-        if (error.message?.includes('Failed to fetch') || 
-            error.message?.includes('NetworkError') ||
-            error.message?.includes('network') ||
-            error.code === 'PGRST') {
+        if (error?.message?.includes('Failed to fetch') || 
+            error?.message?.includes('NetworkError') ||
+            error?.message?.includes('network') ||
+            error?.code === 'PGRST') {
           setConnectionError(true)
         }
         
@@ -196,7 +193,15 @@ export default function StudentDashboard() {
     } finally {
       setRefreshingRequests(false)
     }
-  }
+  }, [user?.id, selectedChat, toast])
+
+  // 2. THEN use the functions in useEffect
+  useEffect(() => {
+    if (user?.id) {
+      fetchUserRequests()
+      fetchUserStats()
+    }
+  }, [user?.id, fetchUserRequests, fetchUserStats])
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -344,6 +349,21 @@ export default function StudentDashboard() {
     })
   }
 
+  const handleSignOut = async () => {
+    try {
+      setIsLoading(true);
+      await signOut();
+    } catch (error) {
+      console.error("Sign out failed:", error);
+      setIsLoading(false);
+      toast({
+        title: "Error",
+        description: "Failed to sign out. Please try again.",
+        variant: "destructive"
+      });
+    };
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-indigo-950">
       {/* Sidebar */}
@@ -445,7 +465,11 @@ export default function StudentDashboard() {
           </div>
           
           <div className="absolute bottom-4 left-4 right-4">
-            <Button variant="ghost" className="w-full justify-start text-white hover:text-white hover:bg-indigo-800" onClick={signOut}>
+            <Button 
+              variant="ghost" 
+              className="w-full justify-start text-white hover:text-white hover:bg-indigo-800" 
+              onClick={handleSignOut}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               <span>Sign Out</span>
             </Button>

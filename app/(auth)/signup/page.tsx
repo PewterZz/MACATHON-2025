@@ -2,16 +2,17 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Github } from "lucide-react"
+import { Github, Loader2 } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
 import { toast } from "@/components/ui/use-toast"
+import { createSupabaseClient } from "@/lib/supabase"
 
 export default function SignUp() {
   const [name, setName] = useState("")
@@ -21,23 +22,65 @@ export default function SignUp() {
   const [isLoading, setIsLoading] = useState(false)
   const [isGithubLoading, setIsGithubLoading] = useState(false)
   const router = useRouter()
-  const { signUp } = useAuth()
+  const { signUp, user } = useAuth()
+  
+  // Redirect if user is already logged in
+  useEffect(() => {
+    if (user) {
+      router.push('/dashboard')
+    }
+  }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (isLoading) return
     setIsLoading(true)
 
     try {
-      await signUp(email, password, {
-        name,
-        role: isHelper ? "helper" : "user"
+      // Create a dedicated supabase client for this operation
+      const supabase = createSupabaseClient()
+      
+      // Clear any existing session first to prevent conflicts
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('supabase.auth.token')
+      }
+      
+      // Use Supabase directly instead of context
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+            role: isHelper ? "helper" : "user"
+          },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        }
       })
-      router.push("/email-sent")
-    } catch (error) {
+      
+      if (error) throw error
+      
+      // Explicitly don't wait for email confirmation
+      if (data?.user) {
+        if (!data.user.email_confirmed_at) {
+          // Store the email in localStorage to make it available for resend
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('signupEmail', email)
+          }
+          router.push("/email-sent")
+        } else {
+          // Already confirmed (rare case)
+          router.push("/dashboard")
+        }
+      } else {
+        router.push("/email-sent")
+      }
+    } catch (error: any) {
       console.error("Sign up failed:", error)
       toast({
         title: "Registration failed",
-        description: "There was a problem with your registration. Please try again.",
+        description: error?.message || "There was a problem with your registration. Please try again.",
         variant: "destructive"
       })
     } finally {
@@ -45,9 +88,12 @@ export default function SignUp() {
     }
   }
 
-  const handleGithubSignUp = async () => {
+  const handleGithubSignUp = () => {
+    if (isGithubLoading) return
     setIsGithubLoading(true)
+    
     try {
+      // Just redirect to the GitHub auth endpoint
       router.push('/api/auth/github')
     } catch (error) {
       console.error("GitHub sign up failed:", error)
@@ -78,6 +124,7 @@ export default function SignUp() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              disabled={isLoading}
               className="bg-slate-900 border-slate-700 text-slate-100"
             />
           </div>
@@ -92,6 +139,7 @@ export default function SignUp() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              disabled={isLoading}
               className="bg-slate-900 border-slate-700 text-slate-100"
             />
           </div>
@@ -106,6 +154,7 @@ export default function SignUp() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              disabled={isLoading}
               className="bg-slate-900 border-slate-700 text-slate-100"
             />
           </div>
@@ -114,6 +163,7 @@ export default function SignUp() {
               id="helper"
               checked={isHelper}
               onCheckedChange={(checked) => setIsHelper(checked as boolean)}
+              disabled={isLoading}
               className="border-slate-500 data-[state=checked]:bg-[#3ECF8E] data-[state=checked]:border-[#3ECF8E]"
             />
             <label
@@ -128,7 +178,14 @@ export default function SignUp() {
             className="w-full bg-[#3ECF8E] hover:bg-[#3ECF8E]/90 text-slate-900"
             disabled={isLoading}
           >
-            {isLoading ? "Creating account..." : "Create account"}
+            {isLoading ? (
+              <span className="flex items-center">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Creating account...
+              </span>
+            ) : (
+              "Create account"
+            )}
           </Button>
         </form>
 
@@ -147,8 +204,17 @@ export default function SignUp() {
           onClick={handleGithubSignUp}
           disabled={isGithubLoading}
         >
-          <Github className="mr-2 h-4 w-4" />
-          {isGithubLoading ? "Loading..." : "GitHub"}
+          {isGithubLoading ? (
+            <span className="flex items-center">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading...
+            </span>
+          ) : (
+            <>
+              <Github className="mr-2 h-4 w-4" />
+              GitHub
+            </>
+          )}
         </Button>
       </CardContent>
       <CardFooter className="flex justify-center">

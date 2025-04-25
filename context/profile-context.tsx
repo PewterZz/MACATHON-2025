@@ -13,6 +13,7 @@ interface ProfileContextType {
   error: Error | null
   updateProfile: (updates: Partial<Omit<Profile, 'id'>>) => Promise<Profile>
   refreshProfile: () => Promise<void>
+  clearProfile: () => void
 }
 
 const ProfileContext = createContext<ProfileContextType | undefined>(undefined)
@@ -99,10 +100,30 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Clear the profile data
+  const clearProfile = () => {
+    setProfile(null)
+    setError(null)
+  }
+
   // Initial profile fetch
   useEffect(() => {
-    fetchProfile()
-  }, [user?.id])
+    let isMounted = true;
+    
+    if (user?.id) {
+      fetchProfile().catch(error => {
+        console.error('Profile fetch error:', error);
+      });
+    } else {
+      // If user is null, clear the profile
+      clearProfile();
+      setIsLoading(false);
+    }
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   // Subscribe to profile changes
   useEffect(() => {
@@ -173,7 +194,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ProfileContext.Provider value={{ profile, isLoading, error, updateProfile, refreshProfile }}>
+    <ProfileContext.Provider value={{ profile, isLoading, error, updateProfile, refreshProfile, clearProfile }}>
       {children}
     </ProfileContext.Provider>
   )
