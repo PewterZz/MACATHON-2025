@@ -425,8 +425,7 @@ export default function HelperDashboard() {
         description: "Failed to sign out. Please try again.",
         variant: "destructive"
       });
-    }
-  };
+    };
 
   const historyColumns = [
     { accessorKey: "issue", header: "Issue" },

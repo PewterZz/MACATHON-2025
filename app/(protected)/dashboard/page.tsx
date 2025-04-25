@@ -5,6 +5,7 @@ import { useProfile } from "@/context/profile-context"
 import HelperDashboard from "./helper-dashboard"
 import StudentDashboard from "./student-dashboard"
 import { useAuth } from "@/context/auth-context"
+import { CustomLoader } from "@/components/ui/custom-loader"
 
 export default function Dashboard() {
   const { profile, isLoading: profileLoading } = useProfile()
@@ -13,7 +14,7 @@ export default function Dashboard() {
   if (profileLoading || authLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+        <CustomLoader size="lg" color="default" label="Loading..." />
       </div>
     )
   }

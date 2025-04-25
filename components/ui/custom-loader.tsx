@@ -62,6 +62,8 @@ export function CustomLoader({
             height={size === "sm" ? 32 : size === "md" ? 48 : 64}
             className="object-contain"
             onError={handleImageError}
+            priority
+            unoptimized
           />
         )}
       </div>

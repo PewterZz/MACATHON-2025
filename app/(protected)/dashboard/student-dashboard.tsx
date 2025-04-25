@@ -565,6 +565,62 @@ export default function StudentDashboard() {
                 initial="hidden"
                 animate="visible"
               >
+                {/* Stats cards - only visible on main dashboard tab */}
+                <motion.div 
+                  className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
+                  variants={containerVariants}
+                  initial="hidden"
+                  animate="visible"
+                >
+                  <motion.div variants={cardVariants}>
+                    <Card className="bg-indigo-900 border-indigo-800">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-white text-sm font-medium">Total Requests</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center justify-between">
+                          <div className="text-2xl font-bold text-white">{requestsCount}</div>
+                          <div className="p-2 bg-indigo-500/10 rounded-full">
+                            <MessageCircle className="h-4 w-4 text-indigo-400" />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                  
+                  <motion.div variants={cardVariants}>
+                    <Card className="bg-indigo-900 border-indigo-800">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-white text-sm font-medium">Active Conversations</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center justify-between">
+                          <div className="text-2xl font-bold text-white">{activeRequests.length}</div>
+                          <div className="p-2 bg-blue-500/10 rounded-full">
+                            <User className="h-4 w-4 text-blue-400" />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                  
+                  <motion.div variants={cardVariants}>
+                    <Card className="bg-indigo-900 border-indigo-800">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-white text-sm font-medium">Response Time</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center justify-between">
+                          <div className="text-2xl font-bold text-white">~5 min</div>
+                          <div className="p-2 bg-purple-500/10 rounded-full">
+                            <Clock className="h-4 w-4 text-purple-400" />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                </motion.div>
+
                 <Card className="bg-indigo-900 border-indigo-800">
                   <CardHeader>
                     <CardTitle className="text-xl text-white">Request Peer Support</CardTitle>
