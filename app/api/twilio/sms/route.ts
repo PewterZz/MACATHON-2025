@@ -25,7 +25,7 @@ const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiRespo
   try {
     // Check if the class exists, if not create it
     const classObj = {
-      class: 'WhatsAppChat',
+      class: 'SMSChat',
       properties: [
         { name: 'phoneNumber', dataType: ['string'] },
         { name: 'userMessage', dataType: ['text'] },
@@ -43,7 +43,7 @@ const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiRespo
     
     // Add the data object
     await weaviateClient.data.creator()
-      .withClassName('WhatsAppChat')
+      .withClassName('SMSChat')
       .withProperties({
         phoneNumber,
         userMessage,
@@ -52,7 +52,7 @@ const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiRespo
       })
       .do();
       
-    console.log(`Stored WhatsApp conversation in Weaviate for ${phoneNumber}`);
+    console.log(`Stored SMS conversation in Weaviate for ${phoneNumber}`);
   } catch (error) {
     console.error('Error storing in Weaviate:', error);
   }
@@ -64,9 +64,10 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
     const messages = [
       {
         role: "system",
-        content: `You are a compassionate mental health first responder via WhatsApp. 
+        content: `You are a compassionate mental health first responder via SMS. 
         Your role is to provide immediate support, validation, and guidance to someone in distress.
-        Keep responses conversational, warm, and helpful. Aim for 2-3 short paragraphs maximum.
+        Keep responses conversational, warm, and helpful. 
+        Be very concise (under 160 characters if possible) since this is SMS.
         Do not identify yourself as an AI - just respond naturally as a supportive listener.`
       }
     ];
@@ -86,10 +87,10 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
       model: "gpt-4",
       messages,
       temperature: 0.7,
-      max_tokens: 250,
+      max_tokens: 150,
     });
     
-    return response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
+    return response.choices[0].message.content || "I'm here to listen. What's going on?";
   } catch (error) {
     console.error('Error getting AI response:', error);
     return "I'm here to listen. Please tell me what's on your mind.";
@@ -128,15 +129,12 @@ export async function POST(req: NextRequest) {
   }
   
   try {
-    // Extract the phone number from the WhatsApp ID (format: whatsapp:+1234567890)
-    const phoneNumber = from.replace('whatsapp:', '');
-    
     // Check if this is a new conversation or continuing an existing one
     const { data: existingRequest } = await supabaseAdmin
       .from('requests')
       .select('id, status')
-      .eq('channel', 'whatsapp')
-      .eq('external_id', phoneNumber)
+      .eq('channel', 'sms')
+      .eq('external_id', from)
       .eq('status', 'open')
       .maybeSingle();
     
@@ -168,7 +166,7 @@ export async function POST(req: NextRequest) {
         });
       
       // Store in Weaviate
-      storeInWeaviate(phoneNumber, body, aiResponse);
+      storeInWeaviate(from, body, aiResponse);
       
       // Return a TwiML response with the AI message
       return new NextResponse(
@@ -193,8 +191,8 @@ export async function POST(req: NextRequest) {
       const { data: newRequest, error } = await supabaseAdmin
         .from('requests')
         .insert({
-          channel: 'whatsapp',
-          external_id: phoneNumber,
+          channel: 'sms',
+          external_id: from,
           summary: result.summary,
           risk: result.risk,
           status: result.risk >= 0.7 ? 'urgent' : 'open'
@@ -226,7 +224,7 @@ export async function POST(req: NextRequest) {
         });
       
       // Store in Weaviate
-      storeInWeaviate(phoneNumber, body, aiResponse);
+      storeInWeaviate(from, body, aiResponse);
       
       // Return a TwiML response with the AI response
       return new NextResponse(
@@ -242,7 +240,7 @@ export async function POST(req: NextRequest) {
       );
     }
   } catch (error) {
-    console.error('WhatsApp webhook error:', error);
+    console.error('SMS webhook error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 } 
