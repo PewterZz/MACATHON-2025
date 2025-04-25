@@ -26,37 +26,52 @@ export async function GET(request: NextRequest) {
     
     // If we have a user, check if they need a profile
     if (data?.user) {
-      // Check if user already has a profile
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', data.user.id)
-        .single();
-      
-      // If no profile exists, create one
-      if (profileError && profileError.code === 'PGRST116') {
-        // Get user name from metadata or email
-        const userName = data.user.user_metadata?.name || 
-                         data.user.email?.split('@')[0] || 
-                         'New User';
+      try {
+        console.log('Creating profile for user:', data.user.id);
         
-        // Get role from metadata or default to user
-        const isHelper = data.user.user_metadata?.role === 'helper';
-        
-        const { error: insertError } = await supabase
+        // Check if user already has a profile
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .insert({
-            id: data.user.id,
-            name: userName,
-            is_helper: isHelper,
-            helper_score: 0
-          });
+          .select('id')
+          .eq('id', data.user.id)
+          .single();
         
-        if (insertError) {
-          console.error('Error creating profile:', insertError);
+        // If no profile exists, create one
+        if (profileError && profileError.code === 'PGRST116') {
+          // Get user name from metadata or email
+          const userName = data.user.user_metadata?.name || 
+                          data.user.email?.split('@')[0] || 
+                          'New User';
+          
+          // Get role from metadata or default to user
+          const isHelper = data.user.user_metadata?.role === 'helper';
+          
+          // Use await and capture the return value to ensure completion
+          const { data: newProfile, error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: data.user.id,
+              name: userName,
+              is_helper: isHelper,
+              helper_score: 0
+            })
+            .select()
+            .single();
+          
+          if (insertError) {
+            console.error('Error creating profile:', insertError);
+            // Don't throw here to continue auth flow
+          } else {
+            console.log('Profile created successfully:', newProfile);
+          }
+        } else if (profileError) {
+          console.error('Error checking profile:', profileError);
+        } else {
+          console.log('Profile already exists:', profile);
         }
-      } else if (profileError) {
-        console.error('Error checking profile:', profileError);
+      } catch (profileErr) {
+        console.error('Unexpected error in profile creation:', profileErr);
+        // Don't block auth flow on profile creation errors
       }
 
       // Check if this is a new user (no email verified)

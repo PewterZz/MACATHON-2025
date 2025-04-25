@@ -1,5 +1,6 @@
 import { createSupabaseClient } from '@/lib/supabase';
 import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
                        authData.user.email?.split('@')[0] || 
                        'New User';
       
+      // Try with regular client first
       const { data: newProfile, error: insertError } = await supabase
         .from('profiles')
         .insert({
@@ -56,6 +58,26 @@ export async function GET(request: NextRequest) {
         data: newProfile || null,
         error: insertError || null
       };
+      
+      // If that fails, try with admin client to bypass RLS
+      if (insertError) {
+        const { data: adminProfile, error: adminInsertError } = await supabaseAdmin
+          .from('profiles')
+          .insert({
+            id: authData.user.id,
+            name: userName,
+            is_helper: true,
+            helper_score: 0
+          })
+          .select()
+          .single();
+          
+        profileCreationResult.adminAttempt = {
+          success: !adminInsertError,
+          data: adminProfile || null,
+          error: adminInsertError || null
+        };
+      }
     }
     
     // Check RLS permissions
@@ -67,26 +89,45 @@ export async function GET(request: NextRequest) {
       user: {
         id: authData.user.id,
         email: authData.user.email,
-        metadata: authData.user.user_metadata
+        metadata: authData.user.user_metadata,
+        emailConfirmed: authData.user.email_confirmed_at,
+        createdAt: authData.user.created_at
       },
       profile: {
         exists: !!profile,
         data: profile || null,
-        error: profileError || null,
-        fixAttempted,
-        profileCreationResult
+        error: profileError ? {
+          message: profileError.message,
+          code: profileError.code,
+          details: profileError.details
+        } : null
       },
-      rlsPermissions: {
+      fix: {
+        attempted: fixAttempted,
+        result: profileCreationResult
+      },
+      permissions: {
+        rlsTest: rlsTest !== null,
         canReadProfiles: !rlsError,
-        error: rlsError
+        error: rlsError ? {
+          message: rlsError.message,
+          code: rlsError.code,
+          details: rlsError.details
+        } : null
       },
-      instructions: profileError && !fixAttempted 
-        ? "Add ?fix=true to create missing profile" 
-        : null
+      debug: {
+        url: requestUrl.toString(),
+        timestamp: new Date().toISOString()
+      }
     });
-
   } catch (error) {
-    console.error('Debug profile error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('Profile debug error:', error);
+    return NextResponse.json(
+      { 
+        error: 'Internal server error', 
+        details: error instanceof Error ? error.message : String(error)
+      }, 
+      { status: 500 }
+    );
   }
 } 

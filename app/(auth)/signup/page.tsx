@@ -46,6 +46,8 @@ export default function SignUp() {
         localStorage.removeItem('supabase.auth.token')
       }
       
+      console.log('Starting signup process with email:', email)
+      
       // Use Supabase directly instead of context
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -61,13 +63,23 @@ export default function SignUp() {
       
       if (error) throw error
       
+      console.log('Signup response:', {
+        userId: data?.user?.id,
+        emailConfirmedAt: data?.user?.email_confirmed_at,
+        identities: data?.user?.identities?.length,
+      })
+      
+      // Store the user data for access in the email-sent page
+      if (typeof window !== 'undefined' && data?.user) {
+        localStorage.setItem('signupEmail', email)
+        localStorage.setItem('signupName', name)
+        localStorage.setItem('signupIsHelper', isHelper ? 'true' : 'false')
+        localStorage.setItem('signupUserId', data.user.id)
+      }
+      
       // Explicitly don't wait for email confirmation
       if (data?.user) {
         if (!data.user.email_confirmed_at) {
-          // Store the email in localStorage to make it available for resend
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('signupEmail', email)
-          }
           router.push("/email-sent")
         } else {
           // Already confirmed (rare case)

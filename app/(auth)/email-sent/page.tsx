@@ -16,7 +16,26 @@ export default function EmailSent() {
     }
     return ""
   })
+  const [userId, setUserId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('signupUserId') || ""
+    }
+    return ""
+  })
+  const [name, setName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('signupName') || ""
+    }
+    return ""
+  })
+  const [isHelper, setIsHelper] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('signupIsHelper') === 'true'
+    }
+    return false
+  })
   const [isLoading, setIsLoading] = useState(false)
+  const [debugMode, setDebugMode] = useState(false)
   const supabase = createSupabaseClient()
 
   const handleResendEmail = async () => {
@@ -63,9 +82,58 @@ export default function EmailSent() {
     return () => {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('signupEmail')
+        localStorage.removeItem('signupName')
+        localStorage.removeItem('signupIsHelper')
+        localStorage.removeItem('signupUserId')
       }
     }
   }, [])
+
+  const handleEnsureProfile = async () => {
+    if (!userId) {
+      toast({
+        title: "User ID required",
+        description: "No user ID found for profile creation",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      // Call debug endpoint with fix=true
+      const response = await fetch(`/api/debug/profile?fix=true`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      })
+      
+      const data = await response.json()
+      
+      if (data.error) {
+        throw new Error(data.error)
+      }
+
+      toast({
+        title: "Profile check complete",
+        description: data.profile.exists 
+          ? "Profile already exists" 
+          : (data.fix?.result?.success ? "Profile created successfully" : "Could not create profile"),
+      })
+      
+      console.log('Profile debug data:', data)
+    } catch (error) {
+      console.error("Failed to check profile:", error)
+      toast({
+        title: "Profile check failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive"
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
     <Card className="w-full bg-slate-800 border-slate-700 text-center">
@@ -104,6 +172,34 @@ export default function EmailSent() {
         >
           {isLoading ? "Sending..." : "Resend Verification Email"}
         </Button>
+        
+        {/* Debug section */}
+        <div className="pt-4 border-t border-slate-700 mt-4">
+          <Button 
+            variant="ghost" 
+            className="text-xs text-slate-400 hover:text-slate-300"
+            onClick={() => setDebugMode(!debugMode)}
+          >
+            {debugMode ? "Hide Debug Options" : "Show Debug Options"}
+          </Button>
+          
+          {debugMode && (
+            <div className="mt-4 space-y-4 text-left">
+              <div>
+                <p className="text-sm text-slate-400 mb-2">User ID: {userId || 'Not available'}</p>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="w-full border-slate-700 text-slate-100 hover:bg-slate-700"
+                  onClick={handleEnsureProfile}
+                  disabled={isLoading || !userId}
+                >
+                  {isLoading ? "Checking..." : "Check/Create Profile"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </CardFooter>
     </Card>
   )

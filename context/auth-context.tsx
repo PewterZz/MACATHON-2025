@@ -25,6 +25,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Function to ensure a profile exists for the user
   const ensureProfileExists = async (user: User) => {
     try {
+      console.log('Checking if profile exists for user', user.id)
+      
       // Check if profile exists
       const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
@@ -32,16 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', user.id)
         .single()
 
+      console.log('Profile check result:', { existingProfile, error: profileError })
+
       // If no profile found (404 error), create one
       if (profileError && profileError.code === 'PGRST116') {
-        console.log('Creating new profile for user', user.id)
+        console.log('No profile found, creating new profile for user', user.id)
         
         // Extract name from metadata or email
         const userName = user.user_metadata?.name || 
                          user.email?.split('@')[0] || 
                          'New User'
         
-        const { error: insertError } = await supabase
+        const { data: insertData, error: insertError } = await supabase
           .from('profiles')
           .insert({
             id: user.id,
@@ -49,13 +53,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             is_helper: true,
             helper_score: 0
           })
+          .select()
+        
+        console.log('Profile creation result:', { insertData, insertError })
         
         if (insertError) {
           console.error('Error creating profile:', insertError)
           // Don't throw here to prevent auth flow disruption
+        } else {
+          console.log('Profile created successfully')
         }
       } else if (profileError) {
         console.error('Error checking profile:', profileError)
+      } else {
+        console.log('Profile already exists:', existingProfile)
       }
     } catch (err) {
       console.error('Error in ensureProfileExists:', err)
@@ -118,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
@@ -126,6 +137,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         throw error
       }
+      
+      // Explicitly ensure profile exists after sign in
+      if (data.user) {
+        console.log('Sign in successful, ensuring profile exists for', data.user.id)
+        await ensureProfileExists(data.user)
+      }
+      
+      return data
     } catch (error) {
       console.error("Sign in failed:", error)
       throw error
