@@ -36,13 +36,19 @@ export const createSupabaseClient = () => {
   }
 
   try {
+    const isProd = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+    
     return createClientComponentClient<Database>({
       supabaseUrl,
       supabaseKey: supabaseAnonKey,
       options: {
         auth: {
-          persistSession: true,  // Make sure sessions persist
-          storageKey: 'supabase.auth.token',
+          persistSession: true,
+          storageKey: 'sb-auth-token',
+          detectSessionInUrl: true,
+          flowType: 'pkce',
+          autoRefreshToken: true,
+          // Configure localStorage for session persistence
           storage: {
             getItem: (key) => {
               if (typeof window !== 'undefined') {
@@ -53,15 +59,34 @@ export const createSupabaseClient = () => {
             setItem: (key, value) => {
               if (typeof window !== 'undefined') {
                 window.localStorage.setItem(key, value);
+                // Also try to set in sessionStorage as a fallback
+                try {
+                  window.sessionStorage.setItem(key, value);
+                } catch (e) {
+                  console.error('Failed to set session in sessionStorage:', e);
+                }
               }
             },
             removeItem: (key) => {
               if (typeof window !== 'undefined') {
                 window.localStorage.removeItem(key);
+                try {
+                  window.sessionStorage.removeItem(key);
+                } catch (e) {
+                  console.error('Failed to remove session from sessionStorage:', e);
+                }
               }
             },
           },
-          autoRefreshToken: true,
+          // Configure cookies for session persistence
+          cookieOptions: {
+            name: 'sb-auth-token',
+            lifetime: 60 * 60 * 24 * 7, // 1 week
+            domain: isProd ? window.location.hostname : undefined,
+            sameSite: 'lax',
+            path: '/',
+            secure: isProd
+          }
         }
       }
     });

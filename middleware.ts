@@ -27,7 +27,20 @@ export async function middleware(req: NextRequest) {
     !req.nextUrl.pathname.includes('.');
   
   try {
-    const supabase = createMiddlewareClient({ req, res });
+    const supabase = createMiddlewareClient({ 
+      req, 
+      res,
+      options: {
+        cookies: {
+          name: 'sb-auth-token',
+          lifetime: 60 * 60 * 24 * 7, // 1 week
+          domain: req.nextUrl.hostname,
+          sameSite: 'lax',
+          path: '/',
+          secure: process.env.NODE_ENV === 'production'
+        }
+      }
+    });
     const { data: { session } } = await supabase.auth.getSession();
     
     // For authentication paths: if user is already logged in, redirect to dashboard
