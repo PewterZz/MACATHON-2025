@@ -15,10 +15,14 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Store conversation in Weaviate
+// Store conversation in Weaviate - make completely non-blocking
 const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string, requestId: number) => {
+  // Run in a separate try/catch to ensure it never affects the main flow
   try {
-    return storeConversation({
+    console.log(`Attempting to store WhatsApp message in Weaviate for ${phoneNumber}, requestId: ${requestId}`);
+    
+    // Don't await this - make it completely non-blocking
+    storeConversation({
       className: 'WhatsAppChat',
       data: {
         phoneNumber,
@@ -27,10 +31,15 @@ const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiRespo
         requestId: requestId.toString(),
         timestamp: new Date().toISOString()
       }
+    }).then(result => {
+      console.log(`Weaviate storage result for ${phoneNumber}: ${result}`);
+    }).catch(err => {
+      console.error('Weaviate storage error (non-blocking):', err);
     });
+    
+    return true;
   } catch (error) {
-    // Log but don't throw - ensure this never breaks the main flow
-    console.error('Error storing in Weaviate:', error);
+    console.error('Error initiating Weaviate storage:', error);
     return false;
   }
 };
@@ -44,6 +53,8 @@ const generateReferenceCode = () => {
 // Get AI response to user input
 const getAIResponse = async (userMessage: string, conversationHistory: string[] = [], isNewConversation: boolean = false, referenceCode?: string): Promise<string> => {
   try {
+    console.log('Getting AI response with OpenAI');
+    
     const systemMessage = isNewConversation 
       ? `You are a compassionate mental health first responder via WhatsApp. 
       Your role is to provide immediate support, validation, and guidance to someone in distress.
@@ -86,159 +97,237 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
       aiResponse += `\n\nYou can access our full support platform at ${APP_URL} using reference code: ${referenceCode}`;
     }
     
+    console.log('OpenAI response received successfully');
     return aiResponse;
   } catch (error) {
-    console.error('Error getting AI response:', error);
-    return "I'm here to listen. Please tell me what's on your mind.";
+    console.error('Error getting AI response from OpenAI:', error);
+    return "I'm here to listen. Please tell me what's on your mind. (Note: We're experiencing some technical difficulties, but I'm still here to help)";
   }
 };
 
 // Fetch conversation history
 const getConversationHistory = async (requestId: number): Promise<string[]> => {
   try {
+    console.log(`Fetching conversation history for request ID: ${requestId}`);
+    
     const { data, error } = await supabaseAdmin
       .from('messages')
       .select('sender, content')
       .eq('request_id', requestId)
       .order('created_at', { ascending: true });
     
-    if (error || !data) {
-      console.error('Error fetching conversation history:', error);
+    if (error) {
+      console.error('Error fetching conversation history from Supabase:', error);
       return [];
     }
     
+    if (!data || data.length === 0) {
+      console.log('No conversation history found');
+      return [];
+    }
+    
+    console.log(`Found ${data.length} messages in history`);
     return data.map(msg => msg.content);
   } catch (error) {
-    console.error('Error fetching conversation history:', error);
+    console.error('Error in getConversationHistory:', error);
     return [];
   }
 };
 
 export async function POST(req: NextRequest) {
-  const formData = await req.formData();
-  const messageSid = formData.get('MessageSid') as string;
-  const from = formData.get('From') as string;
-  const body = formData.get('Body') as string;
-  
-  // Skip if we don't have the necessary data
-  if (!messageSid || !from || !body) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-  }
+  console.log('WhatsApp webhook received');
   
   try {
+    const formData = await req.formData();
+    const messageSid = formData.get('MessageSid') as string;
+    const from = formData.get('From') as string;
+    const body = formData.get('Body') as string;
+    
+    console.log(`WhatsApp message received - SID: ${messageSid}, From: ${from}`);
+    
+    // Skip if we don't have the necessary data
+    if (!messageSid || !from || !body) {
+      console.error('Missing required fields in webhook');
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+    
     // Extract the phone number from the WhatsApp ID (format: whatsapp:+1234567890)
     const phoneNumber = from.replace('whatsapp:', '');
+    console.log(`Processing message from phone number: ${phoneNumber}`);
     
-    // Check if this is a new conversation or continuing an existing one
-    const { data: existingRequest } = await supabaseAdmin
-      .from('requests')
-      .select('id, status, reference_code')
-      .eq('channel', 'whatsapp')
-      .eq('external_id', phoneNumber)
-      .eq('status', 'open')
-      .maybeSingle();
-    
-    let aiResponse = '';
-    
-    if (existingRequest) {
-      // Get conversation history
-      const history = await getConversationHistory(existingRequest.id);
-      
-      // Get AI response with conversation context
-      aiResponse = await getAIResponse(body, history, false, existingRequest.reference_code);
-      
-      // Add the user message to an existing request
-      await supabaseAdmin
-        .from('messages')
-        .insert({
-          request_id: existingRequest.id,
-          sender: 'caller',
-          content: body
-        });
-      
-      // Add the AI response
-      await supabaseAdmin
-        .from('messages')
-        .insert({
-          request_id: existingRequest.id,
-          sender: 'ai',
-          content: aiResponse
-        });
-      
-      // Store in Weaviate with request ID for better tracking
-      storeInWeaviate(phoneNumber, body, aiResponse, existingRequest.id).catch(err => {
-        console.error('Non-blocking Weaviate storage error:', err);
-      });
-      
-      // Return a TwiML response with the AI message
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?>
-        <Response>
-          <Message>${aiResponse}</Message>
-        </Response>`,
-        {
-          headers: {
-            'Content-Type': 'text/xml'
-          }
-        }
-      );
-    } else {
-      // This is a new conversation, analyze with AI
-      const result = await triage(body);
-      
-      // Generate a reference code for anonymous web access
-      const referenceCode = generateReferenceCode();
-      
-      // Create a new request with reference code
-      const { data: newRequest, error } = await supabaseAdmin
+    try {
+      // Check if this is a new conversation or continuing an existing one
+      console.log('Checking for existing request in Supabase');
+      const { data: existingRequest, error: requestError } = await supabaseAdmin
         .from('requests')
-        .insert({
-          channel: 'whatsapp',
-          external_id: phoneNumber,
-          summary: result.summary,
-          risk: result.risk,
-          status: result.risk >= 0.7 ? 'urgent' : 'open',
-          reference_code: referenceCode
-        })
-        .select()
-        .single();
+        .select('id, status, reference_code')
+        .eq('channel', 'whatsapp')
+        .eq('external_id', phoneNumber)
+        .eq('status', 'open')
+        .maybeSingle();
       
-      if (error) {
-        console.error('Error creating request:', error);
-        return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
+      if (requestError) {
+        console.error('Error querying Supabase for existing request:', requestError);
       }
       
-      // Get AI response for the initial message (with reference code)
-      aiResponse = await getAIResponse(body, [], true, referenceCode);
+      let aiResponse = '';
       
-      // Add the initial message
-      await supabaseAdmin
-        .from('messages')
-        .insert({
-          request_id: newRequest.id,
-          sender: 'caller',
-          content: body
-        });
+      if (existingRequest) {
+        console.log(`Found existing request ID: ${existingRequest.id}`);
+        
+        // Get conversation history
+        const history = await getConversationHistory(existingRequest.id);
+        
+        // Get AI response with conversation context
+        aiResponse = await getAIResponse(body, history, false, existingRequest.reference_code);
+        
+        console.log('Adding user message to Supabase');
+        // Add the user message to an existing request
+        const { error: msgError } = await supabaseAdmin
+          .from('messages')
+          .insert({
+            request_id: existingRequest.id,
+            sender: 'caller',
+            content: body
+          });
+        
+        if (msgError) {
+          console.error('Error adding user message to Supabase:', msgError);
+        }
+        
+        console.log('Adding AI response to Supabase');
+        // Add the AI response
+        const { error: aiMsgError } = await supabaseAdmin
+          .from('messages')
+          .insert({
+            request_id: existingRequest.id,
+            sender: 'ai',
+            content: aiResponse
+          });
+        
+        if (aiMsgError) {
+          console.error('Error adding AI response to Supabase:', aiMsgError);
+        }
+        
+        // Store in Weaviate with request ID for better tracking - non-blocking
+        storeInWeaviate(phoneNumber, body, aiResponse, existingRequest.id);
+        
+        console.log('Returning TwiML response for existing conversation');
+        // Return a TwiML response with the AI message
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?>
+          <Response>
+            <Message>${aiResponse}</Message>
+          </Response>`,
+          {
+            headers: {
+              'Content-Type': 'text/xml'
+            }
+          }
+        );
+      } else {
+        console.log('Creating new conversation');
+        
+        // This is a new conversation, analyze with AI
+        console.log('Performing triage analysis');
+        let result;
+        try {
+          result = await triage(body);
+          console.log('Triage result:', result);
+        } catch (triageError) {
+          console.error('Error in triage:', triageError);
+          result = { summary: "User reached out for support", risk: 0.5 };
+        }
+        
+        // Generate a reference code for anonymous web access
+        const referenceCode = generateReferenceCode();
+        console.log(`Generated reference code: ${referenceCode}`);
+        
+        // Create a new request with reference code
+        console.log('Creating new request in Supabase');
+        const { data: newRequest, error: newReqError } = await supabaseAdmin
+          .from('requests')
+          .insert({
+            channel: 'whatsapp',
+            external_id: phoneNumber,
+            summary: result.summary,
+            risk: result.risk,
+            status: result.risk >= 0.7 ? 'urgent' : 'open',
+            reference_code: referenceCode
+          })
+          .select()
+          .single();
+        
+        if (newReqError) {
+          console.error('Error creating request in Supabase:', newReqError);
+          throw new Error('Failed to create request in database');
+        }
+        
+        if (!newRequest) {
+          console.error('No request returned from Supabase insert');
+          throw new Error('Failed to create request - no data returned');
+        }
+        
+        console.log(`Created new request with ID: ${newRequest.id}`);
+        
+        // Get AI response for the initial message (with reference code)
+        aiResponse = await getAIResponse(body, [], true, referenceCode);
+        
+        console.log('Adding initial user message to Supabase');
+        // Add the initial message
+        const { error: initMsgError } = await supabaseAdmin
+          .from('messages')
+          .insert({
+            request_id: newRequest.id,
+            sender: 'caller',
+            content: body
+          });
+        
+        if (initMsgError) {
+          console.error('Error adding initial message to Supabase:', initMsgError);
+        }
+        
+        console.log('Adding AI response to Supabase');
+        // Add AI response
+        const { error: aiRespError } = await supabaseAdmin
+          .from('messages')
+          .insert({
+            request_id: newRequest.id,
+            sender: 'ai',
+            content: aiResponse
+          });
+        
+        if (aiRespError) {
+          console.error('Error adding AI response to Supabase:', aiRespError);
+        }
+        
+        // Store in Weaviate with request ID for better tracking - non-blocking
+        storeInWeaviate(phoneNumber, body, aiResponse, newRequest.id);
+        
+        console.log('Returning TwiML response for new conversation');
+        // Return a TwiML response with the AI response
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?>
+          <Response>
+            <Message>${aiResponse}</Message>
+          </Response>`,
+          {
+            headers: {
+              'Content-Type': 'text/xml'
+            }
+          }
+        );
+      }
+    } catch (processingError) {
+      console.error('Error processing WhatsApp message:', processingError);
       
-      // Add AI response
-      await supabaseAdmin
-        .from('messages')
-        .insert({
-          request_id: newRequest.id,
-          sender: 'ai',
-          content: aiResponse
-        });
+      // Always try to send a response, even if we encountered an error
+      const errorResponse = "I'm here to help, but I'm experiencing some technical difficulties. Please try again in a moment.";
       
-      // Store in Weaviate with request ID for better tracking
-      storeInWeaviate(phoneNumber, body, aiResponse, newRequest.id).catch(err => {
-        console.error('Non-blocking Weaviate storage error:', err);
-      });
-      
-      // Return a TwiML response with the AI response
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?>
         <Response>
-          <Message>${aiResponse}</Message>
+          <Message>${errorResponse}</Message>
         </Response>`,
         {
           headers: {
@@ -247,8 +336,20 @@ export async function POST(req: NextRequest) {
         }
       );
     }
-  } catch (error) {
-    console.error('WhatsApp webhook error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  } catch (outerError) {
+    console.error('WhatsApp webhook critical error:', outerError);
+    
+    // Send a basic response in case of critical error
+    return new NextResponse(
+      `<?xml version="1.0" encoding="UTF-8"?>
+      <Response>
+        <Message>I'm here to help, but our system is having issues. Please try again shortly.</Message>
+      </Response>`,
+      {
+        headers: {
+          'Content-Type': 'text/xml'
+        }
+      }
+    );
   }
 } 
