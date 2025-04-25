@@ -17,16 +17,22 @@ const openai = new OpenAI({
 
 // Store conversation in Weaviate
 const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string, requestId: number) => {
-  return storeConversation({
-    className: 'SMSChat',
-    data: {
-      phoneNumber,
-      userMessage,
-      aiResponse,
-      requestId: requestId.toString(),
-      timestamp: new Date().toISOString()
-    }
-  });
+  try {
+    return storeConversation({
+      className: 'SMSChat',
+      data: {
+        phoneNumber,
+        userMessage,
+        aiResponse,
+        requestId: requestId.toString(),
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    // Log but don't throw - ensure this never breaks the main flow
+    console.error('Error storing in Weaviate:', error);
+    return false;
+  }
 };
 
 // Generate a unique reference code

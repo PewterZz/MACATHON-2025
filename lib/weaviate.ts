@@ -68,18 +68,39 @@ export const storeConversation = async (options: {
     
     // Create schema class if it doesn't exist
     try {
-      // This would need to be customized based on your schema needs
-      // This is just a simplified example
-      await client.schema.classCreator().withClass({
-        class: className,
-        properties: Object.keys(data).map(key => ({
-          name: key,
-          dataType: key === 'timestamp' ? ['date'] : ['text'],
-        })),
-      }).do();
+      // Check if the class already exists
+      const schema = await client.schema.getter().do();
+      const classExists = schema.classes?.some(c => c.class === className);
+      
+      if (!classExists) {
+        console.log(`Creating new schema class ${className}`);
+        
+        // Define properties based on the data object
+        const properties = Object.keys(data).map(key => {
+          let dataType = ['text'];
+          
+          // Handle special data types
+          if (key === 'timestamp') {
+            dataType = ['date'];
+          } else if (key === 'requestId') {
+            dataType = ['text'];
+          }
+          
+          return {
+            name: key,
+            dataType: dataType,
+          };
+        });
+        
+        // Create the class with properties
+        await client.schema.classCreator().withClass({
+          class: className,
+          properties: properties,
+        }).do();
+      }
     } catch (e) {
-      // Class might already exist, which is fine
-      console.log(`Schema class ${className} might already exist`);
+      // Log the error but continue - we'll attempt to store anyway
+      console.warn(`Schema operation for class ${className} error:`, e);
     }
     
     // Store the data
