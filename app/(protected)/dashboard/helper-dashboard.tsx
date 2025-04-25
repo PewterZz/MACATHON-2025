@@ -1,0 +1,594 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import RequestCard from "@/components/RequestCard"
+import ChatPanel from "@/components/ChatPanel"
+import { useQueue } from "@/hooks/useQueue"
+import { DataTable } from "@/components/DataTable"
+import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { useAuth } from "@/context/auth-context"
+import { useProfile } from "@/context/profile-context"
+import { useSessionHistory } from "@/hooks/useSessionHistory"
+import { LogOut, AlertTriangle, RefreshCw, UserPlus, CheckCircle, Clock, FileText, PieChart, MessageCircle, Coffee, ArrowUpRight, BellRing } from "lucide-react"
+import { createSupabaseClient } from "@/lib/supabase"
+import { useToast } from "@/components/ui/use-toast"
+import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
+
+export default function HelperDashboard() {
+  const { queue: liveQueue, isLoading, claimRequest, refreshQueue } = useQueue()
+  const [activeChat, setActiveChat] = useState<string | null>(null)
+  const [claimedRequests, setClaimedRequests] = useState<string[]>([])
+  const { user, signOut } = useAuth()
+  const { profile, updateProfile } = useProfile()
+  const { history, isLoading: isHistoryLoading, refreshHistory } = useSessionHistory()
+  const [autoAssign, setAutoAssign] = useState(false)
+  const [refreshingClaimed, setRefreshingClaimed] = useState(false)
+  const [name, setName] = useState('')
+  const [isFixingProfile, setIsFixingProfile] = useState(false)
+  const [availability, setAvailability] = useState('available')
+  const [helpedCount, setHelpedCount] = useState(0)
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const { toast } = useToast()
+  
+  // Get current tab from URL or default to 'queue'
+  const currentTab = searchParams?.get('tab') || 'queue'
+
+  // Handle tab change
+  const handleTabChange = (value: string) => {
+    router.push(`/dashboard?tab=${value}`, { scroll: false })
+  }
+  
+  // Use only live queue data from Supabase
+  const queue = isLoading ? [] : liveQueue
+
+  // Set name from profile when loaded
+  useEffect(() => {
+    if (profile?.name) {
+      setName(profile.name)
+    }
+  }, [profile?.name])
+
+  // Fetch count of helped people
+  useEffect(() => {
+    const fetchStats = async () => {
+      if (!user?.id) return
+      
+      try {
+        const supabase = createSupabaseClient()
+        const { data, error } = await supabase
+          .from('requests')
+          .select('id')
+          .eq('claimed_by', user.id)
+          .eq('status', 'closed')
+          
+        if (!error && data) {
+          setHelpedCount(data.length)
+        }
+      } catch (error) {
+        console.error("Failed to fetch stats:", error)
+      }
+    }
+    
+    fetchStats()
+  }, [user?.id])
+
+  useEffect(() => {
+    // Fetch claimed requests on component mount
+    const fetchClaimedRequests = async () => {
+      try {
+        setRefreshingClaimed(true)
+        const supabase = createSupabaseClient()
+        const { data, error } = await supabase
+          .from('requests')
+          .select('id')
+          .eq('status', 'claimed')
+          .eq('claimed_by', user?.id)
+          
+        if (error) throw error
+        
+        setClaimedRequests(data.map(r => r.id))
+        
+        // If there are claimed requests but no active chat, set the first one as active
+        if (data.length > 0 && !activeChat) {
+          setActiveChat(data[0].id)
+        }
+      } catch (error) {
+        console.error("Failed to fetch claimed requests:", error)
+      } finally {
+        setRefreshingClaimed(false)
+      }
+    }
+    
+    if (user?.id) {
+      fetchClaimedRequests()
+    }
+  }, [user?.id])
+
+  const handleClaimRequest = async (requestId: string) => {
+    try {
+      await claimRequest(requestId)
+      setClaimedRequests(prev => [...prev, requestId])
+      setActiveChat(requestId)
+    } catch (error) {
+      console.error("Failed to claim request:", error)
+    }
+  }
+  
+  const refreshClaimedRequests = async () => {
+    try {
+      setRefreshingClaimed(true)
+      const supabase = createSupabaseClient()
+      const { data, error } = await supabase
+        .from('requests')
+        .select('id')
+        .eq('status', 'claimed')
+        .eq('claimed_by', user?.id)
+        
+      if (error) throw error
+      
+      setClaimedRequests(data.map(r => r.id))
+    } catch (error) {
+      console.error("Failed to refresh claimed requests:", error)
+    } finally {
+      setRefreshingClaimed(false)
+    }
+  }
+
+  const handleCloseChat = (requestId: string) => {
+    setClaimedRequests(prev => prev.filter(id => id !== requestId))
+    if (activeChat === requestId) {
+      const remainingChats = claimedRequests.filter(id => id !== requestId)
+      setActiveChat(remainingChats.length > 0 ? remainingChats[0] : null)
+    }
+  }
+
+  const handleSaveName = async () => {
+    if (name.trim() && profile) {
+      try {
+        await updateProfile({ name: name.trim() })
+      } catch (error) {
+        console.error("Failed to update profile:", error)
+      }
+    }
+  }
+
+  const handleFixProfile = async () => {
+    if (!user) return
+    
+    setIsFixingProfile(true)
+    try {
+      const response = await fetch('/api/debug/profile?fix=true')
+      const result = await response.json()
+      
+      if (result.profile.profileCreationResult?.success) {
+        toast({
+          title: "Profile fixed",
+          description: "Your profile has been created successfully.",
+          variant: "default"
+        })
+        // Force page reload to refresh profile data
+        window.location.reload()
+      } else {
+        toast({
+          title: "Profile fix failed",
+          description: "There was a problem creating your profile. Please contact support.",
+          variant: "destructive"
+        })
+        console.error("Profile fix result:", result)
+      }
+    } catch (error) {
+      console.error("Failed to fix profile:", error)
+      toast({
+        title: "Error",
+        description: "Failed to fix profile. Please try again later.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsFixingProfile(false)
+    }
+  }
+
+  const handleChangeAvailability = (newStatus: string) => {
+    setAvailability(newStatus)
+    toast({
+      title: "Status Updated",
+      description: `You are now ${newStatus}`,
+      variant: "default"
+    })
+  }
+
+  const historyColumns = [
+    { accessorKey: "issue", header: "Issue" },
+    { accessorKey: "outcome", header: "Outcome" },
+    { accessorKey: "timeSpent", header: "Time Spent" },
+    {
+      accessorKey: "actions",
+      header: "Actions",
+      cell: () => (
+        <Button variant="outline" size="sm" className="border-slate-700 text-slate-100 hover:bg-slate-700">
+          View
+        </Button>
+      ),
+    },
+  ]
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-slate-900">
+      {/* Sidebar */}
+      <div className="w-64 bg-slate-800 border-r border-slate-700 fixed h-full left-0 overflow-y-auto">
+        <div className="p-4">
+          <div className="flex items-center justify-center mb-8 mt-4">
+            <div className="h-24 w-24">
+              <img src="/logo.png" alt="Meld logo" className="h-full w-full object-contain" />
+            </div>
+            <h1 className="text-xl font-bold text-slate-100 ml-3 tracking-tight">Meld</h1>
+          </div>
+          
+          <div className="mb-6 pb-6 border-b border-slate-700">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-[#3ECF8E] flex items-center justify-center font-bold text-slate-900">
+                {name ? name.charAt(0).toUpperCase() : 'H'}
+              </div>
+              <div>
+                <p className="font-medium text-slate-100">{name || 'Helper'}</p>
+                <Badge className="bg-green-600 text-slate-100 hover:bg-green-500">Helper</Badge>
+              </div>
+            </div>
+            
+            <div className="mt-4">
+              <p className="text-xs text-slate-400 mb-1">Availability</p>
+              <div className="grid grid-cols-3 gap-1 text-center text-xs">
+                <Button 
+                  variant={availability === 'available' ? 'default' : 'outline'} 
+                  className={availability === 'available' ? 'bg-green-600 text-white hover:bg-green-500' : 'border-slate-700 hover:bg-slate-700'} 
+                  size="sm"
+                  onClick={() => handleChangeAvailability('available')}
+                >
+                  Available
+                </Button>
+                <Button 
+                  variant={availability === 'busy' ? 'default' : 'outline'} 
+                  className={availability === 'busy' ? 'bg-yellow-600 text-white hover:bg-yellow-500' : 'border-slate-700 hover:bg-slate-700'} 
+                  size="sm"
+                  onClick={() => handleChangeAvailability('busy')}
+                >
+                  Busy
+                </Button>
+                <Button 
+                  variant={availability === 'away' ? 'default' : 'outline'} 
+                  className={availability === 'away' ? 'bg-red-600 text-white hover:bg-red-500' : 'border-slate-700 hover:bg-slate-700'} 
+                  size="sm"
+                  onClick={() => handleChangeAvailability('away')}
+                >
+                  Away
+                </Button>
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            <Button 
+              variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'queue' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              onClick={() => handleTabChange('queue')}
+            >
+              <Clock className="mr-2 h-4 w-4" />
+              <span>Request Queue</span>
+            </Button>
+            <Button 
+              variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'active' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              onClick={() => handleTabChange('active')}
+            >
+              <MessageCircle className="mr-2 h-4 w-4" />
+              <span>Active Chats</span>
+              {claimedRequests.length > 0 && (
+                <Badge className="ml-auto bg-[#3ECF8E] text-slate-900">{claimedRequests.length}</Badge>
+              )}
+            </Button>
+            <Button 
+              variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'history' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              onClick={() => handleTabChange('history')}
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              <span>Session History</span>
+            </Button>
+            <Button 
+              variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'analytics' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              onClick={() => handleTabChange('analytics')}
+            >
+              <PieChart className="mr-2 h-4 w-4" />
+              <span>Analytics</span>
+            </Button>
+          </div>
+          
+          <div className="absolute bottom-4 left-4 right-4">
+            <Button variant="ghost" className="w-full justify-start text-slate-300 hover:text-slate-100 hover:bg-slate-700" onClick={signOut}>
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Sign Out</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto pl-64">
+        <div className="container mx-auto p-6 max-w-[1600px]">
+          <Tabs defaultValue={currentTab} value={currentTab} onValueChange={handleTabChange} className="w-full space-y-6">
+            <div className="flex justify-between items-center mb-4">
+              <h1 className="text-2xl font-bold text-slate-100">Helper Dashboard</h1>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center">
+                  <Switch
+                    id="auto-assign"
+                    checked={autoAssign}
+                    onCheckedChange={setAutoAssign}
+                    className="data-[state=checked]:bg-[#3ECF8E]"
+                  />
+                  <label htmlFor="auto-assign" className="ml-2 text-sm text-slate-300">
+                    Auto-assign requests
+                  </label>
+                </div>
+                <Button variant="outline" size="sm" className="border-slate-700 hover:bg-slate-700 flex items-center gap-1">
+                  <BellRing className="h-4 w-4" />
+                  <span>Notifications</span>
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-slate-100 text-sm font-medium">People Helped</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="text-2xl font-bold text-slate-100">{helpedCount}</div>
+                    <div className="p-2 bg-green-500/10 rounded-full">
+                      <UserPlus className="h-4 w-4 text-[#3ECF8E]" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-slate-100 text-sm font-medium">Active Sessions</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="text-2xl font-bold text-slate-100">{claimedRequests.length}</div>
+                    <div className="p-2 bg-blue-500/10 rounded-full">
+                      <MessageCircle className="h-4 w-4 text-blue-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-slate-100 text-sm font-medium">Waiting Requests</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="text-2xl font-bold text-slate-100">{queue.length}</div>
+                    <div className="p-2 bg-yellow-500/10 rounded-full">
+                      <Clock className="h-4 w-4 text-yellow-500" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <TabsList className="bg-slate-800 border-slate-700 hidden">
+              <TabsTrigger value="queue" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
+                Queue
+              </TabsTrigger>
+              <TabsTrigger 
+                value="active" 
+                className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900 flex items-center gap-1.5"
+              >
+                Active Chats
+              </TabsTrigger>
+              <TabsTrigger value="history" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
+                Session History
+              </TabsTrigger>
+              <TabsTrigger value="analytics" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
+                Analytics
+              </TabsTrigger>
+            </TabsList>
+            
+            {/* Queue tab content */}
+            <TabsContent value="queue" className="mt-0">
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-lg font-semibold text-slate-100">Support Queue</CardTitle>
+                  <Button variant="outline" size="sm" onClick={refreshQueue} disabled={isLoading} className="border-slate-700 hover:bg-slate-700">
+                    <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <div className="flex justify-center p-4">
+                      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+                    </div>
+                  ) : queue.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                      <Coffee className="h-12 w-12 text-slate-500 mb-4" />
+                      <h3 className="text-lg font-medium text-slate-100">Queue Empty</h3>
+                      <p className="text-slate-400 mt-2 max-w-md">There are currently no requests waiting for assistance. Take a moment to relax!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {queue.map((request) => (
+                        <RequestCard
+                          key={request.id}
+                          request={request}
+                          onClaim={() => handleClaimRequest(request.id)}
+                          className="bg-slate-700 border-slate-600 hover:border-[#3ECF8E]/50"
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* Active chats tab content */}
+            <TabsContent value="active" className="mt-0">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                <div className="lg:col-span-1 space-y-4">
+                  <Card className="bg-slate-800 border-slate-700">
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                      <CardTitle className="text-lg font-semibold text-slate-100">Your Active Chats</CardTitle>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={refreshClaimedRequests} 
+                        disabled={refreshingClaimed}
+                        className="border-slate-700 hover:bg-slate-700"
+                      >
+                        <RefreshCw className={`h-4 w-4 mr-2 ${refreshingClaimed ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </Button>
+                    </CardHeader>
+                    <CardContent>
+                      {refreshingClaimed ? (
+                        <div className="flex justify-center p-4">
+                          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+                        </div>
+                      ) : claimedRequests.length === 0 ? (
+                        <div className="text-center py-8">
+                          <MessageCircle className="h-12 w-12 text-slate-500 mx-auto mb-4" />
+                          <h3 className="text-lg font-medium text-slate-100">No Active Chats</h3>
+                          <p className="text-slate-400 mt-2">You don't have any active support chats. Claim requests from the queue to start helping.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {claimedRequests.map((requestId) => (
+                            <div 
+                              key={requestId}
+                              className={`p-3 rounded-md cursor-pointer hover:bg-slate-700 transition-colors ${activeChat === requestId ? 'bg-slate-700 border-l-4 border-l-[#3ECF8E]' : 'bg-slate-750'}`}
+                              onClick={() => setActiveChat(requestId)}
+                            >
+                              <div className="flex items-center">
+                                <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
+                                <p className="text-sm font-medium text-slate-100 truncate">Chat #{requestId.substring(0, 8)}</p>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-1">Active conversation</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                  
+                  <Card className="bg-slate-800 border-slate-700">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg font-semibold text-slate-100">AI Coach</CardTitle>
+                      <CardDescription className="text-slate-400">Get real-time guidance while chatting</CardDescription>
+                    </CardHeader>
+                    <CardContent className="text-slate-200">
+                      {activeChat ? (
+                        <div className="space-y-3">
+                          <div className="flex items-start space-x-2">
+                            <div className="p-1.5 bg-blue-500/10 rounded-full">
+                              <CheckCircle className="h-4 w-4 text-blue-500" />
+                            </div>
+                            <div className="text-sm">
+                              <p>Use open-ended questions to better understand the situation</p>
+                            </div>
+                          </div>
+                          <div className="flex items-start space-x-2">
+                            <div className="p-1.5 bg-amber-500/10 rounded-full">
+                              <AlertTriangle className="h-4 w-4 text-amber-500" />
+                            </div>
+                            <div className="text-sm">
+                              <p>Be mindful of suggesting solutions too early</p>
+                            </div>
+                          </div>
+                          <div className="mt-4">
+                            <Button variant="outline" size="sm" className="w-full border-slate-700 hover:bg-slate-700">
+                              <ArrowUpRight className="h-4 w-4 mr-2" />
+                              View Full Coaching Analysis
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-slate-400 text-sm">Select an active chat to receive coaching insights</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+                
+                <div className="lg:col-span-2">
+                  {activeChat ? (
+                    <ChatPanel
+                      requestId={activeChat}
+                      onClose={() => handleCloseChat(activeChat)}
+                      isHelper={true}
+                    />
+                  ) : (
+                    <Card className="bg-slate-800 border-slate-700 h-full flex items-center justify-center">
+                      <CardContent className="text-center p-8">
+                        <MessageCircle className="h-16 w-16 text-slate-500 mx-auto mb-4" />
+                        <h3 className="text-xl font-medium text-slate-100">No Active Chat Selected</h3>
+                        <p className="text-slate-400 mt-2 max-w-md mx-auto">
+                          Select an active chat from the sidebar or claim a new request from the queue to start helping.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            
+            {/* Rest of the tabs content */}
+            <TabsContent value="history">
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-slate-100">Session History</CardTitle>
+                    <CardDescription className="text-slate-300">View your past help sessions and outcomes</CardDescription>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="flex items-center gap-1.5 border-slate-700 text-slate-100 hover:bg-slate-700"
+                    onClick={refreshHistory}
+                    disabled={isHistoryLoading}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isHistoryLoading ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  {isHistoryLoading ? (
+                    <div className="flex justify-center p-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+                    </div>
+                  ) : history.length > 0 ? (
+                    <DataTable columns={historyColumns} data={history} />
+                  ) : (
+                    <div className="text-center p-4">
+                      <p className="text-slate-300">No session history available yet.</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+    </div>
+  )
+} 
