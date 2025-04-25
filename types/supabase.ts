@@ -15,18 +15,21 @@ export interface Database {
           name: string | null
           is_helper: boolean
           helper_score: number
+          contact_email: string | null
         }
         Insert: {
           id: string
           name?: string | null
           is_helper?: boolean
           helper_score?: number
+          contact_email?: string | null
         }
         Update: {
           id?: string
           name?: string | null
           is_helper?: boolean
           helper_score?: number
+          contact_email?: string | null
         }
       }
       requests: {

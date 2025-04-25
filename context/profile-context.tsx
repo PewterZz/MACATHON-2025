@@ -66,7 +66,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
             id: user.id,
             name: userName,
             is_helper: isHelper,
-            helper_score: isHelper ? 0 : null
+            helper_score: 0 // Always insert 0, column is NOT NULL
           })
           .select()
           .single()
