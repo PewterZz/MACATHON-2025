@@ -15,8 +15,10 @@ import { createSupabaseClient } from "@/lib/supabase"
 import { useToast } from "@/components/ui/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { motion } from "framer-motion"
-import { LoadingTimeout, LoadingErrorDisplay } from "@/components/LoadingTimeout"
+import { LoadingErrorDisplay } from "@/components/LoadingTimeout"
 import { CustomLoader } from "@/components/ui/custom-loader"
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import type { Database } from "@/types/supabase"
 
 // Animation variants for tab content
 const tabContentVariants = {
@@ -69,6 +71,39 @@ const ConnectionErrorDisplay = ({ onRetry }: { onRetry: () => void }) => (
   </div>
 );
 
+// A component that runs a callback after a timeout when loading is active
+const EnhancedLoadingTimeout = ({ 
+  isLoading, 
+  onTimeout, 
+  timeoutMs = 8000,
+  children 
+}: {
+  isLoading: boolean;
+  onTimeout: () => void;
+  timeoutMs?: number;
+  children: React.ReactNode;
+}) => {
+  // Set up timeout effect
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    
+    if (isLoading) {
+      timeoutId = setTimeout(() => {
+        onTimeout();
+      }, timeoutMs);
+    }
+    
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [isLoading, onTimeout, timeoutMs]);
+  
+  // Just render the children
+  return <>{children}</>;
+};
+
 export default function StudentDashboard() {
   const { user, signOut } = useAuth()
   const { profile, updateProfile } = useProfile()
@@ -94,6 +129,7 @@ export default function StudentDashboard() {
 
   const [loadingError, setLoadingError] = useState(false)
   const [connectionError, setConnectionError] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
 
   // Handle tab change
   const handleTabChange = (value: string) => {
@@ -124,12 +160,23 @@ export default function StudentDashboard() {
     
     try {
       const supabase = createSupabaseClient()
+      if (!supabase) {
+        console.error("Supabase client not available")
+        return
+      }
+      
       const { data, error } = await supabase
         .from('requests')
         .select('id')
-        .eq('created_by', user.id)
+        .eq('user_id', user.id)
       
-      if (!error && data) {
+      if (error) {
+        console.error("Supabase error fetching stats (stringified):", JSON.stringify(error, null, 2));
+        console.error("Supabase error fetching stats (raw):", error);
+        return
+      }
+      
+      if (data) {
         setRequestsCount(data.length)
       }
     } catch (error) {
@@ -139,47 +186,70 @@ export default function StudentDashboard() {
 
   // Fetch existing user requests
   const fetchUserRequests = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      console.log("No user ID available for fetching requests");
+      return;
+    }
     
     try {
+      console.log("Starting fetch requests for user:", user.id);
       setRefreshingRequests(true)
       setLoadingError(false)
       setConnectionError(false)
       
       const supabase = createSupabaseClient()
+      if (!supabase) {
+        console.error("Failed to initialize Supabase client")
+        setConnectionError(true)
+        throw new Error("Supabase client initialization failed")
+      }
+      
+      console.log("Supabase client initialized successfully, executing query");
+      console.log("Query parameters:", { userId: user.id });
       
       // Find requests created by this user
       const { data, error } = await supabase
         .from('requests')
         .select('id')
-        .eq('created_by', user.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
+      
+      console.log("Query executed. Response:", { hasData: Boolean(data), hasError: Boolean(error) });
       
       if (error) {
         // Safely log the error, handling the case where error might be an empty object
-        console.error("Supabase error fetching requests:", error, {
+        console.error("Supabase error fetching requests (stringified):", JSON.stringify(error, null, 2));
+        console.error("Supabase error fetching requests (raw):", error, {
           message: error?.message || 'No error message',
           details: error?.details || 'No details',
           hint: error?.hint || 'No hint',
           code: error?.code || 'No code'
-        })
+        });
         
         // Check if it's a connection error
         if (error?.message?.includes('Failed to fetch') || 
             error?.message?.includes('NetworkError') ||
             error?.message?.includes('network') ||
             error?.code === 'PGRST') {
+          console.log("Setting connection error flag based on error type");
           setConnectionError(true)
         }
         
         throw error
       }
       
-      const requests = data.map(r => r.id)
+      if (!data) {
+        console.error("No data returned from Supabase")
+        throw new Error("No data returned")
+      }
+      
+      console.log("Request data retrieved successfully:", { count: data.length });
+      const requests = data.map((r: { id: string }) => r.id)
       setActiveRequests(requests)
       
       // Set the first request as selected if there is one and nothing is currently selected
       if (requests.length > 0 && !selectedChat) {
+        console.log("Auto-selecting first request:", requests[0]);
         setSelectedChat(requests[0])
       }
     } catch (error) {
@@ -203,6 +273,29 @@ export default function StudentDashboard() {
     }
   }, [user?.id, fetchUserRequests, fetchUserStats])
 
+  // Debug Supabase env variables and initialization
+  useEffect(() => {
+    // Check if essential env variables are set
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    console.log('Supabase environment status:', {
+      hasUrl: Boolean(supabaseUrl),
+      hasAnonKey: Boolean(supabaseAnonKey)
+    });
+    
+    // Test Supabase client initialization
+    try {
+      const supabase = createSupabaseClient();
+      console.log('Supabase client initialization:', {
+        success: Boolean(supabase),
+        clientReady: supabase ? 'yes' : 'no'
+      });
+    } catch (error) {
+      console.error('Supabase client initialization error:', error);
+    }
+  }, []);
+
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!issueDescription.trim() || isSubmitting) return
@@ -211,6 +304,19 @@ export default function StudentDashboard() {
       setIsSubmitting(true)
       
       const supabase = createSupabaseClient()
+      if (!supabase) {
+        toast({
+          title: "Connection Error",
+          description: "Could not connect to the database. Please try again later.",
+          variant: "destructive"
+        });
+        throw new Error("Failed to initialize Supabase client")
+      }
+      
+      console.log("Submitting request:", {
+        userId: user?.id,
+        descriptionLength: issueDescription.length
+      });
       
       // Create a new request
       const { data, error } = await supabase
@@ -219,14 +325,25 @@ export default function StudentDashboard() {
           summary: issueDescription.substring(0, 100),
           channel: 'web',
           status: 'open',
-          created_by: user?.id,
+          user_id: user?.id,
           risk: 0.3, // Default risk until AI analyzes
           external_id: `web_${Date.now()}`
         })
         .select('id')
         .single()
       
-      if (error) throw error
+      if (error) {
+        console.error("Failed to create request (stringified):", JSON.stringify(error, null, 2));
+        console.error("Failed to create request (raw):", error);
+        throw error;
+      }
+      
+      if (!data || !data.id) {
+        console.error("Created request but no ID returned");
+        throw new Error("No request ID returned");
+      }
+      
+      console.log("Request created successfully:", { requestId: data.id });
       
       // Add initial message from user
       const { error: messageError } = await supabase
@@ -237,7 +354,10 @@ export default function StudentDashboard() {
           content: issueDescription
         })
       
-      if (messageError) throw messageError
+      if (messageError) {
+        console.error("Failed to add message:", messageError);
+        throw messageError;
+      }
       
       // Analyze with AI (this would ideally happen server-side)
       try {
@@ -484,62 +604,6 @@ export default function StudentDashboard() {
               <h1 className="text-2xl font-bold text-white">Student Dashboard</h1>
             </div>
 
-            {/* Stats cards - moved outside TabsContent to appear on all tabs */}
-            <motion.div 
-              className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
-              variants={containerVariants}
-              initial="hidden"
-              animate="visible"
-            >
-              <motion.div variants={cardVariants}>
-                <Card className="bg-indigo-900 border-indigo-800">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm font-medium">Total Requests</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center justify-between">
-                      <div className="text-2xl font-bold text-white">{requestsCount}</div>
-                      <div className="p-2 bg-indigo-500/10 rounded-full">
-                        <MessageCircle className="h-4 w-4 text-indigo-400" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-              
-              <motion.div variants={cardVariants}>
-                <Card className="bg-indigo-900 border-indigo-800">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm font-medium">Active Conversations</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center justify-between">
-                      <div className="text-2xl font-bold text-white">{activeRequests.length}</div>
-                      <div className="p-2 bg-blue-500/10 rounded-full">
-                        <User className="h-4 w-4 text-blue-400" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-              
-              <motion.div variants={cardVariants}>
-                <Card className="bg-indigo-900 border-indigo-800">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-white text-sm font-medium">Response Time</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center justify-between">
-                      <div className="text-2xl font-bold text-white">~5 min</div>
-                      <div className="p-2 bg-purple-500/10 rounded-full">
-                        <Clock className="h-4 w-4 text-purple-400" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            </motion.div>
-
             <TabsList className="bg-indigo-900 border-indigo-800 hidden">
               <TabsTrigger value="request" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
                 Request Help
@@ -565,7 +629,7 @@ export default function StudentDashboard() {
                 initial="hidden"
                 animate="visible"
               >
-                {/* Stats cards - only visible on main dashboard tab */}
+                {/* Stats cards - only visible on request tab */}
                 <motion.div 
                   className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
                   variants={containerVariants}
@@ -620,8 +684,9 @@ export default function StudentDashboard() {
                     </Card>
                   </motion.div>
                 </motion.div>
-
-                <Card className="bg-indigo-900 border-indigo-800">
+                
+                {/* Form card */}
+                <Card className="border-indigo-800 bg-indigo-900">
                   <CardHeader>
                     <CardTitle className="text-xl text-white">Request Peer Support</CardTitle>
                     <CardDescription className="text-indigo-300">
@@ -648,7 +713,7 @@ export default function StudentDashboard() {
                         <div className="text-sm text-indigo-300">
                           A helper will respond as soon as possible
                         </div>
-                        <LoadingTimeout 
+                        <EnhancedLoadingTimeout 
                           isLoading={isSubmitting} 
                           onTimeout={() => {
                             setIsSubmitting(false)
@@ -677,7 +742,7 @@ export default function StudentDashboard() {
                               </>
                             )}
                           </Button>
-                        </LoadingTimeout>
+                        </EnhancedLoadingTimeout>
                       </div>
                     </form>
                   </CardContent>
@@ -756,55 +821,60 @@ export default function StudentDashboard() {
                       </Button>
                     </CardHeader>
                     <CardContent>
-                      <LoadingTimeout 
-                        isLoading={refreshingRequests} 
-                        onTimeout={() => {
-                          setRefreshingRequests(false)
-                          setLoadingError(true)
-                          console.warn("Request loading timed out after 10 seconds")
-                        }}
-                        timeoutMs={10000}
-                      >
-                        {refreshingRequests ? (
-                          <div className="flex justify-center p-4">
-                            <CustomLoader size="lg" color="indigo" label="Loading your conversations..." />
-                          </div>
-                        ) : loadingError ? (
-                          <LoadingErrorDisplay 
-                            title="Failed to Load Conversations"
-                            description="There was a problem loading your conversations."
-                            onRetry={fetchUserRequests}
-                            icon={AlertTriangle}
-                            theme="indigo"
-                          />
-                        ) : connectionError ? (
-                          <ConnectionErrorDisplay 
-                            onRetry={() => fetchUserRequests()} 
-                          />
-                        ) : activeRequests.length === 0 ? (
-                          <div className="text-center py-8">
-                            <MessageCircle className="h-12 w-12 text-indigo-600 mx-auto mb-4" />
-                            <h3 className="text-lg font-medium text-white">No Active Conversations</h3>
-                            <p className="text-indigo-300 mt-2">You don't have any active help requests. Submit a request to get started.</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {activeRequests.map((requestId) => (
-                              <div 
-                                key={requestId}
-                                className={`p-3 rounded-md cursor-pointer hover:bg-indigo-800 transition-colors ${selectedChat === requestId ? 'bg-indigo-800 border-l-4 border-l-indigo-500' : 'bg-indigo-850'}`}
-                                onClick={() => setSelectedChat(requestId)}
-                              >
-                                <div className="flex items-center">
-                                  <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
-                                  <p className="text-sm font-medium text-white truncate">Chat #{requestId.substring(0, 8)}</p>
-                                </div>
-                                <p className="text-xs text-indigo-300 mt-1">Active conversation</p>
+                      {refreshingRequests ? (
+                        <div className="flex justify-center p-4">
+                          <CustomLoader size="lg" color="indigo" label="Loading your conversations..." />
+                        </div>
+                      ) : loadingError ? (
+                        <LoadingErrorDisplay 
+                          title="Failed to Load Conversations"
+                          description="There was a problem loading your conversations."
+                          onRetry={fetchUserRequests}
+                          theme="indigo"
+                        />
+                      ) : connectionError ? (
+                        <ConnectionErrorDisplay 
+                          onRetry={() => fetchUserRequests()} 
+                        />
+                      ) : activeRequests.length === 0 ? (
+                        <div className="text-center py-8">
+                          <MessageCircle className="h-12 w-12 text-indigo-600 mx-auto mb-4" />
+                          <h3 className="text-lg font-medium text-white">No Active Conversations</h3>
+                          <p className="text-indigo-300 mt-2">You don't have any active help requests. Submit a request to get started.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {activeRequests.map((requestId) => (
+                            <div 
+                              key={requestId}
+                              className={`p-3 rounded-md cursor-pointer hover:bg-indigo-800 transition-colors ${selectedChat === requestId ? 'bg-indigo-800 border-l-4 border-l-indigo-500' : 'bg-indigo-850'}`}
+                              onClick={() => setSelectedChat(requestId)}
+                            >
+                              <div className="flex items-center">
+                                <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
+                                <p className="text-sm font-medium text-white truncate">Chat #{requestId.substring(0, 8)}</p>
                               </div>
-                            ))}
-                          </div>
-                        )}
-                      </LoadingTimeout>
+                              <p className="text-xs text-indigo-300 mt-1">Active conversation</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add timeout effect separately */}
+                      {refreshingRequests && (
+                        <EnhancedLoadingTimeout
+                          isLoading={refreshingRequests}
+                          onTimeout={() => {
+                            setRefreshingRequests(false);
+                            setLoadingError(true);
+                            console.warn("Request loading timed out after 10 seconds");
+                          }}
+                          timeoutMs={10000}
+                        >
+                          {/* This is just for the timeout effect - children aren't rendered */}
+                          <span className="hidden" />
+                        </EnhancedLoadingTimeout>
+                      )}
                     </CardContent>
                   </Card>
                 </div>
@@ -812,8 +882,7 @@ export default function StudentDashboard() {
                 <div className="lg:col-span-2">
                   {selectedChat ? (
                     <ChatPanel
-                      requestId={selectedChat}
-                      isHelper={false}
+                      chatId={selectedChat}
                     />
                   ) : (
                     <Card className="bg-indigo-900 border-indigo-800 h-full flex items-center justify-center">
@@ -1015,7 +1084,7 @@ export default function StudentDashboard() {
                       </div>
                       
                       <div className="flex justify-end">
-                        <LoadingTimeout 
+                        <EnhancedLoadingTimeout 
                           isLoading={isSavingProfile} 
                           onTimeout={() => {
                             setIsSavingProfile(false)
@@ -1043,7 +1112,7 @@ export default function StudentDashboard() {
                               </>
                             )}
                           </Button>
-                        </LoadingTimeout>
+                        </EnhancedLoadingTimeout>
                       </div>
                     </div>
                   </CardContent>
