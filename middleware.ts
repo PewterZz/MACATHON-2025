@@ -32,7 +32,21 @@ export async function middleware(req: NextRequest) {
     
     // For authentication paths: if user is already logged in, redirect to dashboard
     if (session && isAuthPath) {
-      return NextResponse.redirect(new URL('/dashboard', req.url));
+      // Check if the user has a profile before redirecting to dashboard
+      try {
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', session.user.id)
+          .single();
+        
+        // Only redirect if profile exists
+        if (profile && !error) {
+          return NextResponse.redirect(new URL('/dashboard', req.url));
+        }
+      } catch (profileError) {
+        console.error('Error checking profile in middleware:', profileError);
+      }
     }
     
     // For protected paths: if user is not logged in, redirect to sign in

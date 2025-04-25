@@ -24,10 +24,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/signin?error=auth', origin));
     }
     
-    // If we have a user, check if they need a profile
+    // If we have a user, ensure they have a profile
     if (data?.user) {
       try {
-        console.log('Creating profile for user:', data.user.id);
+        console.log('Checking profile for user:', data.user.id);
         
         // Check if user already has a profile
         const { data: profile, error: profileError } = await supabase
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
           .eq('id', data.user.id)
           .single();
         
-        // If no profile exists, create one
+        // Create profile if it doesn't exist
         if (profileError && profileError.code === 'PGRST116') {
           // Get user name from metadata or email
           const userName = data.user.user_metadata?.name || 
@@ -46,7 +46,13 @@ export async function GET(request: NextRequest) {
           // Get role from metadata or default to user
           const isHelper = data.user.user_metadata?.role === 'helper';
           
-          // Use await and capture the return value to ensure completion
+          console.log('Creating new profile with data:', {
+            id: data.user.id,
+            name: userName,
+            is_helper: isHelper
+          });
+          
+          // Create the profile
           const { data: newProfile, error: insertError } = await supabase
             .from('profiles')
             .insert({
@@ -60,10 +66,12 @@ export async function GET(request: NextRequest) {
           
           if (insertError) {
             console.error('Error creating profile:', insertError);
-            // Don't throw here to continue auth flow
           } else {
             console.log('Profile created successfully:', newProfile);
           }
+          
+          // Force a small delay to ensure the profile creation is processed
+          await new Promise(resolve => setTimeout(resolve, 500));
         } else if (profileError) {
           console.error('Error checking profile:', profileError);
         } else {
@@ -71,7 +79,6 @@ export async function GET(request: NextRequest) {
         }
       } catch (profileErr) {
         console.error('Unexpected error in profile creation:', profileErr);
-        // Don't block auth flow on profile creation errors
       }
 
       // Check if this is a new user (no email verified)

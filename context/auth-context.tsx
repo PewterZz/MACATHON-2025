@@ -24,20 +24,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Function to ensure a profile exists for the user
   const ensureProfileExists = async (user: User) => {
+    if (!user || !user.id) {
+      console.error('Cannot create profile: Missing user or user ID')
+      return
+    }
+    
     try {
       console.log('Checking if profile exists for user', user.id)
       
       // Check if profile exists
       const { data: existingProfile, error: profileError } = await supabase
         .from('profiles')
-        .select('id')
+        .select('*')
         .eq('id', user.id)
         .single()
 
-      console.log('Profile check result:', { existingProfile, error: profileError })
+      console.log('Profile check result:', { existingProfile, error: profileError?.message })
 
       // If no profile found (404 error), create one
-      if (profileError && profileError.code === 'PGRST116') {
+      if (profileError && (profileError.code === 'PGRST116' || profileError.message.includes('not found'))) {
         console.log('No profile found, creating new profile for user', user.id)
         
         // Extract name from metadata or email
@@ -45,31 +50,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                          user.email?.split('@')[0] || 
                          'New User'
         
+        // Extract role from metadata or default to user
+        const isHelper = user.user_metadata?.role === 'helper' || false
+        
+        console.log('Creating profile with data:', {
+          id: user.id,
+          name: userName,
+          is_helper: isHelper
+        })
+        
         const { data: insertData, error: insertError } = await supabase
           .from('profiles')
           .insert({
             id: user.id,
             name: userName,
-            is_helper: true,
+            is_helper: isHelper,
             helper_score: 0
           })
           .select()
         
-        console.log('Profile creation result:', { insertData, insertError })
-        
         if (insertError) {
           console.error('Error creating profile:', insertError)
-          // Don't throw here to prevent auth flow disruption
+          throw insertError
         } else {
-          console.log('Profile created successfully')
+          console.log('Profile created successfully:', insertData)
+          
+          // Force a profile refresh after creation
+          router.refresh()
+          return insertData
         }
       } else if (profileError) {
         console.error('Error checking profile:', profileError)
+        throw profileError
       } else {
         console.log('Profile already exists:', existingProfile)
+        return existingProfile
       }
     } catch (err) {
       console.error('Error in ensureProfileExists:', err)
+      throw err
     }
   }
 
@@ -83,11 +102,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const currentUser = data.session?.user ?? null
         
         if (isMounted) {
-          setUser(currentUser)
-          
-          // If user is logged in, ensure they have a profile
+          // If user is logged in, ensure they have a profile before setting user state
           if (currentUser) {
-            await ensureProfileExists(currentUser)
+            try {
+              await ensureProfileExists(currentUser)
+              setUser(currentUser)
+            } catch (error) {
+              console.error('Error ensuring profile exists during init:', error)
+              // Still set the user even if profile creation fails to not block auth
+              setUser(currentUser)
+            }
+          } else {
+            setUser(null)
           }
         }
         
@@ -97,11 +123,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (!isMounted) return;
             
             const newUser = session?.user ?? null
-            setUser(newUser)
             
-            // If new user just logged in, ensure they have a profile
-            if (newUser) {
-              await ensureProfileExists(newUser)
+            // Handle specific auth events
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+              if (newUser) {
+                try {
+                  await ensureProfileExists(newUser)
+                  setUser(newUser)
+                  // Force refresh after successful login and profile creation
+                  router.refresh()
+                } catch (error) {
+                  console.error('Error ensuring profile exists during auth change:', error)
+                  setUser(newUser)
+                }
+              }
+            } else if (event === 'SIGNED_OUT') {
+              setUser(null)
+              router.push('/signin')
+            } else {
+              // For other events, just update the user state
+              setUser(newUser)
             }
           }
         )
@@ -142,6 +183,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.user) {
         console.log('Sign in successful, ensuring profile exists for', data.user.id)
         await ensureProfileExists(data.user)
+        
+        // Force refresh to ensure UI updates
+        router.refresh()
       }
       
       return data
@@ -190,8 +234,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // Clear any auth-related state or local storage
       if (typeof window !== 'undefined') {
-        // Clear any auth-related local storage items
+        // Clear Supabase auth tokens
         localStorage.removeItem('supabase.auth.token')
+        localStorage.removeItem('sb-auth-token')
+        
+        // Clear signup data
+        localStorage.removeItem('signupEmail')
+        localStorage.removeItem('signupName')
+        localStorage.removeItem('signupIsHelper')
+        localStorage.removeItem('signupUserId')
+        
         // Remove any custom cached data
         localStorage.removeItem('cached_profile')
         localStorage.removeItem('cached_user_session')

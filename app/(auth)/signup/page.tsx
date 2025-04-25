@@ -71,10 +71,33 @@ export default function SignUp() {
       
       // Store the user data for access in the email-sent page
       if (typeof window !== 'undefined' && data?.user) {
+        // Store signup info in localStorage
         localStorage.setItem('signupEmail', email)
         localStorage.setItem('signupName', name)
         localStorage.setItem('signupIsHelper', isHelper ? 'true' : 'false')
         localStorage.setItem('signupUserId', data.user.id)
+        
+        // Try to create a profile immediately, even if email isn't confirmed yet
+        try {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+              id: data.user.id,
+              name: name,
+              is_helper: isHelper,
+              helper_score: 0
+            })
+            .select()
+            .single()
+          
+          if (profileError) {
+            console.error('Could not create profile during signup:', profileError)
+          } else {
+            console.log('Profile created during signup:', profile)
+          }
+        } catch (profileErr) {
+          console.error('Error creating profile during signup:', profileErr)
+        }
       }
       
       // Explicitly don't wait for email confirmation
