@@ -1,22 +1,95 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useProfile } from "@/context/profile-context"
 import HelperDashboard from "./helper-dashboard"
 import StudentDashboard from "./student-dashboard"
 import { useAuth } from "@/context/auth-context"
 import { CustomLoader } from "@/components/ui/custom-loader"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, Bug } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
+// Debug panel for tracking state changes
+function DebugPanel({ data }: { data: Record<string, any> }) {
+  return (
+    <div className="fixed bottom-4 right-4 z-50 bg-gray-900 border border-gray-800 rounded p-3 text-xs font-mono max-w-xs overflow-auto max-h-96">
+      <div className="flex justify-between mb-1">
+        <h4 className="font-semibold text-yellow-400">Debug Panel</h4>
+        <span className="text-gray-400">{new Date().toISOString()}</span>
+      </div>
+      <div className="space-y-1">
+        {Object.entries(data).map(([key, value]) => (
+          <div key={key}>
+            <span className="text-blue-400">{key}:</span>{" "}
+            <span className="text-gray-300">
+              {typeof value === "object" 
+                ? JSON.stringify(value, null, 2) 
+                : String(value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard() {
-  const { profile, isLoading: profileLoading, refreshProfile } = useProfile()
+  const { profile, isLoading: profileLoading, error: profileError, refreshProfile } = useProfile()
   const { user, isLoading: authLoading, ensureProfileExists } = useAuth()
   const { toast } = useToast()
   const [isFixingProfile, setIsFixingProfile] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
   const [hasError, setHasError] = useState(false)
+  const [showDebug, setShowDebug] = useState(false)
+  const loadStartTime = useRef(Date.now())
+  const loadingTime = useRef(0)
+  
+  // Track loading time
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (profileLoading || authLoading || isFixingProfile) {
+        loadingTime.current = Date.now() - loadStartTime.current
+      }
+    }, 100)
+    
+    return () => clearInterval(interval)
+  }, [profileLoading, authLoading, isFixingProfile])
+  
+  // Force break infinite loading after 20 seconds
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (profileLoading || authLoading || isFixingProfile) {
+        console.error('Force breaking potential infinite loading state', {
+          profileLoading,
+          authLoading,
+          isFixingProfile,
+          loadingTime: loadingTime.current,
+          profile: !!profile,
+          user: !!user
+        })
+        
+        // Store loading state for debugging
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('_dashboard_last_loading_state', JSON.stringify({
+            timestamp: new Date().toISOString(),
+            profileLoading,
+            authLoading,
+            isFixingProfile,
+            loadingTime: loadingTime.current,
+            hasProfile: !!profile,
+            hasUser: !!user,
+            profileError: profileError?.message
+          }))
+        }
+        
+        // Show debug panel
+        setShowDebug(true)
+      }
+    }, 20000) // 20 seconds
+    
+    return () => clearTimeout(timeout)
+  }, [profileLoading, authLoading, isFixingProfile, profile, user, profileError])
   
   // Maximum number of automatic retries
   const MAX_AUTO_RETRIES = 1
@@ -29,15 +102,21 @@ export default function Dashboard() {
     // 3. We haven't exceeded retry count
     // 4. We're not already fixing a profile
     if (!profileLoading && !authLoading && !profile && user && retryCount < MAX_AUTO_RETRIES && !isFixingProfile) {
+      console.log('Starting profile creation attempt', { retryCount, userId: user.id })
+      
       const attemptProfileCreation = async () => {
         setIsFixingProfile(true)
         setHasError(false)
         
         try {
-          await ensureProfileExists(user)
+          console.log('Ensuring profile exists for user', user.id)
+          const profileData = await ensureProfileExists(user)
+          console.log('Profile ensured, refreshing profile data', profileData)
+          
           // Short delay before refreshing profile to allow database to update
           await new Promise(resolve => setTimeout(resolve, 500))
           await refreshProfile()
+          console.log('Profile refreshed successfully')
           
           toast({
             title: "Profile created",
@@ -67,11 +146,29 @@ export default function Dashboard() {
     const timer = setTimeout(() => {
       if (profileLoading || authLoading || isFixingProfile) {
         setShowLongLoadingMessage(true)
+        
+        // Store loading state timestamp
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('_dashboard_last_render', Date.now().toString())
+        }
       }
     }, 10000) // 10 seconds
     
     return () => clearTimeout(timer)
   }, [profileLoading, authLoading, isFixingProfile])
+  
+  // Debug data to track
+  const debugData = {
+    profileLoading,
+    authLoading,
+    isFixingProfile,
+    retryCount,
+    hasProfile: !!profile,
+    hasUser: !!user,
+    userId: user?.id,
+    loadTime: `${loadingTime.current / 1000}s`,
+    profileError: profileError?.message || 'none'
+  }
   
   // Show loading spinner while any loading is happening
   if (profileLoading || authLoading || isFixingProfile) {
@@ -83,8 +180,19 @@ export default function Dashboard() {
             <p className="text-sm text-slate-300">
               If loading persists, try refreshing the page or clearing your browser cache.
             </p>
+            <Button 
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => setShowDebug(prev => !prev)}
+            >
+              <Bug className="h-4 w-4 mr-2" />
+              {showDebug ? "Hide Debug Info" : "Show Debug Info"}
+            </Button>
           </div>
         )}
+        
+        {showDebug && <DebugPanel data={debugData} />}
       </div>
     )
   }
@@ -138,7 +246,27 @@ export default function Dashboard() {
           >
             Refresh Page
           </Button>
+          
+          <Button 
+            onClick={() => window.location.href = "/emergency-reset"}
+            variant="outline"
+            className="mt-2 ml-2"
+          >
+            Reset Auth Data
+          </Button>
+          
+          <Button 
+            variant="ghost"
+            size="sm"
+            className="mt-2"
+            onClick={() => setShowDebug(prev => !prev)}
+          >
+            <Bug className="h-4 w-4 mr-2" />
+            {showDebug ? "Hide Debug Info" : "Show Debug Info"}
+          </Button>
         </div>
+        
+        {showDebug && <DebugPanel data={debugData} />}
       </div>
     )
   }
@@ -157,16 +285,69 @@ export default function Dashboard() {
           >
             Sign In
           </Button>
+          
+          <Button 
+            onClick={() => window.location.href = "/emergency-reset"}
+            variant="outline"
+            className="mt-2 ml-2"
+          >
+            Reset Auth Data
+          </Button>
+          
+          <Button 
+            variant="ghost"
+            size="sm"
+            className="mt-2"
+            onClick={() => setShowDebug(prev => !prev)}
+          >
+            <Bug className="h-4 w-4 mr-2" />
+            {showDebug ? "Hide Debug Info" : "Show Debug Info"}
+          </Button>
         </div>
+        
+        {showDebug && <DebugPanel data={debugData} />}
       </div>
     )
   }
   
+  // Store successful render timestamp
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('_dashboard_last_render', Date.now().toString())
+  }
+  
   // If we have a profile but it's potentially incomplete, still render but with a type check
   if (profile && typeof profile === 'object') {
-    return 'is_helper' in profile && profile.is_helper ? <HelperDashboard /> : <StudentDashboard />
+    // Debug button in corner for troubleshooting
+    return (
+      <>
+        {'is_helper' in profile && profile.is_helper ? <HelperDashboard /> : <StudentDashboard />}
+        <div className="fixed bottom-4 right-4 z-50">
+          <Button 
+            variant="ghost" 
+            size="sm"
+            onClick={() => setShowDebug(prev => !prev)}
+          >
+            <Bug className="h-4 w-4" />
+          </Button>
+          {showDebug && <DebugPanel data={debugData} />}
+        </div>
+      </>
+    )
   }
   
   // Fallback to student dashboard if we somehow get here
-  return <StudentDashboard />
+  return (
+    <>
+      <StudentDashboard />
+      <Button 
+        variant="ghost" 
+        size="sm"
+        className="fixed bottom-4 right-4 z-50"
+        onClick={() => setShowDebug(prev => !prev)}
+      >
+        <Bug className="h-4 w-4" />
+      </Button>
+      {showDebug && <DebugPanel data={{...debugData, note: "Fallback render"}} />}
+    </>
+  )
 }

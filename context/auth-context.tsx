@@ -254,9 +254,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // Clear any auth-related state or local storage
       if (typeof window !== 'undefined') {
-        // Clear Supabase auth tokens
-        localStorage.removeItem('supabase.auth.token')
-        localStorage.removeItem('sb-auth-token')
+        // Clear all possible Supabase auth tokens
+        const tokensToClear = [
+          // Old project token
+          'sb-mvhgizltbvswhntrwjzt-auth-token',
+          // Current project token
+          'sb-uofmouuathyuapthudyp-auth-token',
+          // Generic tokens
+          'supabase.auth.token',
+          'sb-auth-token',
+          'sb-auth-token-code-verifier'
+        ];
+        
+        // Clear from localStorage
+        tokensToClear.forEach(token => {
+          localStorage.removeItem(token);
+          // Also clear as cookies
+          document.cookie = `${token}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        });
         
         // Clear signup data
         localStorage.removeItem('signupEmail')

@@ -116,6 +116,7 @@ export default function StudentDashboard() {
   const [isFixingProfile, setIsFixingProfile] = useState(false)
   const [mood, setMood] = useState('neutral')
   const [requestsCount, setRequestsCount] = useState(0)
+  const [newMessagesByRequest, setNewMessagesByRequest] = useState<Record<string, number>>({})
   const { toast } = useToast()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -295,6 +296,64 @@ export default function StudentDashboard() {
       console.error('Supabase client initialization error:', error);
     }
   }, []);
+
+  // Add useEffect for Supabase realtime subscription to track new messages
+  useEffect(() => {
+    if (!user?.id) return
+
+    const supabase = createSupabaseClient()
+    if (!supabase) {
+      console.error("Failed to initialize Supabase client for realtime subscription")
+      return
+    }
+
+    // Create a channel that listens for all new messages across all user's requests
+    const channel = supabase
+      .channel('student-dashboard-messages')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages'
+        },
+        (payload) => {
+          // New message came in, check if it's for one of our requests
+          const message = payload.new as any
+          if (!message || !message.request_id) return
+          
+          // Check if this message is from a request that belongs to the user
+          const requestId = message.request_id
+          
+          // If this is a request we're tracking and it's not our current selected one
+          // or we're not on the active chats tab, increment the unread count
+          if (activeRequests.includes(requestId) && 
+              (requestId !== selectedChat || currentTab !== 'active')) {
+            setNewMessagesByRequest(prev => ({
+              ...prev,
+              [requestId]: (prev[requestId] || 0) + 1
+            }))
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log(`Dashboard messages subscription status: ${status}`)
+      })
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [user?.id, activeRequests, selectedChat, currentTab])
+
+  // Clear new message count when selecting a chat
+  useEffect(() => {
+    if (selectedChat && newMessagesByRequest[selectedChat]) {
+      setNewMessagesByRequest(prev => ({
+        ...prev,
+        [selectedChat]: 0
+      }))
+    }
+  }, [selectedChat, newMessagesByRequest])
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -541,7 +600,7 @@ export default function StudentDashboard() {
           <div className="space-y-2">
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'request' ? 'bg-indigo-800 text-indigo-300' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              className={`w-full justify-start ${currentTab === 'request' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('request')}
             >
               <PlusCircle className="mr-2 h-4 w-4" />
@@ -549,7 +608,7 @@ export default function StudentDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'active' ? 'bg-indigo-800 text-indigo-300' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              className={`w-full justify-start ${currentTab === 'active' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('active')}
             >
               <MessageCircle className="mr-2 h-4 w-4" />
@@ -560,7 +619,7 @@ export default function StudentDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'resources' ? 'bg-indigo-800 text-indigo-300' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              className={`w-full justify-start ${currentTab === 'resources' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('resources')}
             >
               <Book className="mr-2 h-4 w-4" />
@@ -568,7 +627,7 @@ export default function StudentDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'schedule' ? 'bg-indigo-800 text-indigo-300' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              className={`w-full justify-start ${currentTab === 'schedule' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('schedule')}
             >
               <Calendar className="mr-2 h-4 w-4" />
@@ -576,7 +635,7 @@ export default function StudentDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'settings' ? 'bg-indigo-800 text-indigo-300' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              className={`w-full justify-start ${currentTab === 'settings' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('settings')}
             >
               <Settings className="mr-2 h-4 w-4" />
@@ -850,9 +909,16 @@ export default function StudentDashboard() {
                               className={`p-3 rounded-md cursor-pointer hover:bg-indigo-800 transition-colors ${selectedChat === requestId ? 'bg-indigo-800 border-l-4 border-l-indigo-500' : 'bg-indigo-850'}`}
                               onClick={() => setSelectedChat(requestId)}
                             >
-                              <div className="flex items-center">
-                                <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
-                                <p className="text-sm font-medium text-white truncate">Chat #{requestId.substring(0, 8)}</p>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                  <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
+                                  <p className="text-sm font-medium text-white truncate">Chat #{requestId.substring(0, 8)}</p>
+                                </div>
+                                {newMessagesByRequest[requestId] > 0 && (
+                                  <span className="bg-indigo-500 text-white text-xs rounded-full px-2 py-1 font-semibold">
+                                    {newMessagesByRequest[requestId]}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-indigo-300 mt-1">Active conversation</p>
                             </div>

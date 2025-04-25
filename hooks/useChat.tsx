@@ -193,6 +193,14 @@ export function useChat(requestId?: string) {
     if (!currentRequestId) return
 
     const client = createSupabaseClient()
+    if (!client) {
+      console.error("Failed to initialize Supabase client for realtime subscription")
+      return
+    }
+
+    console.log(`Setting up realtime subscription for messages:${currentRequestId}`)
+    
+    // Create a more robust subscription with reconnection handling
     const channel = client
       .channel(`messages:${currentRequestId}`)
       .on(
@@ -205,21 +213,46 @@ export function useChat(requestId?: string) {
         },
         (payload) => {
           const newMessage = payload.new as Database['public']['Tables']['messages']['Row']
+          console.log('Received new message via realtime:', newMessage)
           
-          setMessages(current => [
-            ...current,
-            {
-              id: newMessage.id,
-              sender: newMessage.sender as "caller" | "helper" | "ai",
-              content: newMessage.content,
-              timestamp: new Date(newMessage.ts)
+          // Prevent duplicate messages by checking if it already exists
+          setMessages(current => {
+            const messageExists = current.some(msg => msg.id === newMessage.id)
+            if (messageExists) {
+              return current
             }
-          ])
+            
+            return [
+              ...current,
+              {
+                id: newMessage.id,
+                sender: newMessage.sender as "caller" | "helper" | "ai",
+                content: newMessage.content,
+                timestamp: new Date(newMessage.ts)
+              }
+            ]
+          })
         }
       )
-      .subscribe()
+      .subscribe((status) => {
+        console.log(`Realtime subscription status: ${status}`)
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to realtime updates')
+        }
+        if (status === 'CHANNEL_ERROR') {
+          console.error('Error with realtime channel')
+          // Attempt to reconnect after a short delay
+          setTimeout(() => {
+            if (channel.state !== 'joined') {
+              console.log('Attempting to reconnect channel...')
+              channel.subscribe()
+            }
+          }, 2000)
+        }
+      })
 
     return () => {
+      console.log('Cleaning up realtime subscription')
       client.removeChannel(channel)
     }
   }, [currentRequestId])
@@ -266,5 +299,80 @@ export function useChat(requestId?: string) {
     return data.id
   }, [currentRequestId])
 
-  return { messages, isLoading, error, sendMessage, requestId: currentRequestId }
+  // Add a function to manually refresh messages
+  const refreshMessages = useCallback(async () => {
+    if (!currentRequestId) return
+    
+    try {
+      setIsLoading(true)
+      const client = createSupabaseClient()
+      if (!client) {
+        throw new Error("Supabase client not initialized")
+      }
+      
+      const { data, error } = await client
+        .from('messages')
+        .select('*')
+        .eq('request_id', currentRequestId)
+        .order('ts', { ascending: true })
+      
+      if (error) {
+        console.error('Error refreshing messages:', error)
+        return
+      }
+      
+      if (!data) return
+      
+      const formattedMessages = data.map(msg => ({
+        id: msg.id,
+        sender: msg.sender as "caller" | "helper" | "ai",
+        content: msg.content,
+        timestamp: new Date(msg.ts)
+      }))
+      
+      // Only update if we have new messages
+      if (formattedMessages.length > messages.length) {
+        console.log(`Refreshed messages: found ${formattedMessages.length} messages, had ${messages.length} before`)
+        setMessages(formattedMessages)
+      }
+    } catch (err) {
+      console.error('Error in refreshMessages:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [currentRequestId, messages.length])
+
+  // Add automatic refresh on window focus for better real-time experience
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('Window became visible, refreshing messages')
+        refreshMessages()
+      }
+    }
+    
+    // Set up interval to periodically check for messages as a failsafe
+    const intervalId = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        console.log('Periodic message check')
+        refreshMessages()
+      }
+    }, 30000) // Every 30 seconds
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      clearInterval(intervalId)
+    }
+  }, [refreshMessages])
+
+  return {
+    messages,
+    isLoading,
+    error,
+    sendMessage,
+    refreshMessages,
+    requestId: currentRequestId
+  }
 }

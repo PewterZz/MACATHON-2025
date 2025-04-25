@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { triage } from '@/lib/ai';
 import OpenAI from 'openai';
-import weaviate from 'weaviate-ts-client';
+import { storeConversation } from '@/lib/weaviate';
 
 export const runtime = 'nodejs';
 
@@ -11,51 +11,17 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Initialize Weaviate client
-const weaviateClient = weaviate.client({
-  scheme: process.env.WEAVIATE_SCHEME || 'https',
-  host: process.env.WEAVIATE_HOST || 'localhost:8080',
-  apiKey: process.env.WEAVIATE_API_KEY ? 
-    new weaviate.ApiKey(process.env.WEAVIATE_API_KEY) : 
-    undefined,
-});
-
 // Store conversation in Weaviate
 const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string) => {
-  try {
-    // Check if the class exists, if not create it
-    const classObj = {
-      class: 'SMSChat',
-      properties: [
-        { name: 'phoneNumber', dataType: ['string'] },
-        { name: 'userMessage', dataType: ['text'] },
-        { name: 'aiResponse', dataType: ['text'] },
-        { name: 'timestamp', dataType: ['date'] }
-      ],
-    };
-    
-    // Create the schema class if it doesn't exist
-    try {
-      await weaviateClient.schema.classCreator().withClass(classObj).do();
-    } catch (e) {
-      // Class might already exist, which is fine
+  return storeConversation({
+    className: 'SMSChat',
+    data: {
+      phoneNumber,
+      userMessage,
+      aiResponse,
+      timestamp: new Date().toISOString()
     }
-    
-    // Add the data object
-    await weaviateClient.data.creator()
-      .withClassName('SMSChat')
-      .withProperties({
-        phoneNumber,
-        userMessage,
-        aiResponse,
-        timestamp: new Date().toISOString(),
-      })
-      .do();
-      
-    console.log(`Stored SMS conversation in Weaviate for ${phoneNumber}`);
-  } catch (error) {
-    console.error('Error storing in Weaviate:', error);
-  }
+  });
 };
 
 // Get AI response to user input
@@ -165,8 +131,10 @@ export async function POST(req: NextRequest) {
           content: aiResponse
         });
       
-      // Store in Weaviate
-      storeInWeaviate(from, body, aiResponse);
+      // Store in Weaviate (non-blocking)
+      storeInWeaviate(from, body, aiResponse).catch(err => {
+        console.error('Non-blocking Weaviate storage error:', err);
+      });
       
       // Return a TwiML response with the AI message
       return new NextResponse(
@@ -223,8 +191,10 @@ export async function POST(req: NextRequest) {
           content: aiResponse
         });
       
-      // Store in Weaviate
-      storeInWeaviate(from, body, aiResponse);
+      // Store in Weaviate (non-blocking)
+      storeInWeaviate(from, body, aiResponse).catch(err => {
+        console.error('Non-blocking Weaviate storage error:', err);
+      });
       
       // Return a TwiML response with the AI response
       return new NextResponse(

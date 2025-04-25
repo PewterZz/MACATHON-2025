@@ -167,6 +167,13 @@ export default function HelperDashboard() {
   // Get current tab from URL or default to 'queue'
   const currentTab = searchParams?.get('tab') || 'queue'
 
+  // Debug current tab state - more verbose logging
+  useEffect(() => {
+    console.log('Current tab from URL params:', searchParams?.get('tab'));
+    console.log('Computed currentTab value:', currentTab);
+    console.log('Full URL search params:', searchParams?.toString());
+  }, [searchParams, currentTab]);
+
   // Handle tab change
   const handleTabChange = (value: string) => {
     router.push(`/dashboard?tab=${value}`, { scroll: false })
@@ -407,7 +414,7 @@ export default function HelperDashboard() {
         variant: "destructive"
       });
     }
-  };
+  }
 
   const historyColumns = [
     { accessorKey: "issue", header: "Issue" },
@@ -481,7 +488,7 @@ export default function HelperDashboard() {
           <div className="space-y-2">
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'queue' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              className={`w-full justify-start ${currentTab === 'queue' ? 'bg-slate-700 text-[#3ECF8E] border-l-4 border-[#3ECF8E] shadow-[0_0_10px_rgba(62,207,142,0.3)]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
               onClick={() => handleTabChange('queue')}
             >
               <Clock className="mr-2 h-4 w-4" />
@@ -489,7 +496,7 @@ export default function HelperDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'active' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              className={`w-full justify-start ${currentTab === 'active' ? 'bg-slate-700 text-[#3ECF8E] border-l-4 border-[#3ECF8E] shadow-[0_0_10px_rgba(62,207,142,0.3)]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
               onClick={() => handleTabChange('active')}
             >
               <MessageCircle className="mr-2 h-4 w-4" />
@@ -500,7 +507,7 @@ export default function HelperDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'history' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              className={`w-full justify-start ${currentTab === 'history' ? 'bg-slate-700 text-[#3ECF8E] border-l-4 border-[#3ECF8E] shadow-[0_0_10px_rgba(62,207,142,0.3)]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
               onClick={() => handleTabChange('history')}
             >
               <FileText className="mr-2 h-4 w-4" />
@@ -508,7 +515,7 @@ export default function HelperDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'analytics' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              className={`w-full justify-start ${currentTab === 'analytics' ? 'bg-slate-700 text-[#3ECF8E] border-l-4 border-[#3ECF8E] shadow-[0_0_10px_rgba(62,207,142,0.3)]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
               onClick={() => handleTabChange('analytics')}
             >
               <PieChart className="mr-2 h-4 w-4" />
@@ -516,7 +523,7 @@ export default function HelperDashboard() {
             </Button>
             <Button 
               variant="ghost" 
-              className={`w-full justify-start ${currentTab === 'settings' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              className={`w-full justify-start ${currentTab === 'settings' ? 'bg-slate-700 text-[#3ECF8E] border-l-4 border-[#3ECF8E] shadow-[0_0_10px_rgba(62,207,142,0.3)]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
               onClick={() => handleTabChange('settings')}
             >
               <Settings className="mr-2 h-4 w-4" />
@@ -539,7 +546,12 @@ export default function HelperDashboard() {
 
       <div className="flex-1 overflow-y-auto pl-64">
         <div className="container mx-auto p-6 max-w-[1600px]">
-          <Tabs defaultValue={currentTab} value={currentTab} onValueChange={handleTabChange} className="w-full space-y-6">
+          <Tabs 
+            defaultValue={currentTab} 
+            value={currentTab} 
+            onValueChange={handleTabChange} 
+            className="w-full space-y-6"
+          >
             <div className="flex justify-between items-center mb-4">
               <h1 className="text-2xl font-bold text-slate-100">Helper Dashboard</h1>
               <div className="flex items-center gap-4">

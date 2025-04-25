@@ -1,6 +1,21 @@
+// Mark this file as server-only to prevent client-side inclusion
+import 'server-only'
+
 // Using a more dynamic approach to instantiate Twilio client to avoid build issues
 const createTwilioClient = () => {
   try {
+    // Check if we're in a server environment
+    if (typeof window !== 'undefined') {
+      console.error('Twilio client should not be initialized on the client side');
+      return null;
+    }
+    
+    // Check for required environment variables
+    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+      console.error('Missing Twilio credentials in environment variables');
+      return null;
+    }
+    
     const twilio = require('twilio');
     return twilio(
       process.env.TWILIO_ACCOUNT_SID!,
@@ -12,7 +27,13 @@ const createTwilioClient = () => {
   }
 };
 
-export const twilioNumber = process.env.TWILIO_NUMBER!;
+// Only access these variables on the server
+export const twilioNumber = process.env.TWILIO_NUMBER || '';
+
+// Validate that we have a Twilio number
+if (!twilioNumber) {
+  console.warn('TWILIO_NUMBER environment variable is not set');
+}
 
 // Helper function to send an SMS
 export const sendSMS = async (to: string, body: string) => {

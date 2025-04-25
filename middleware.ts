@@ -24,6 +24,11 @@ export async function middleware(req: NextRequest) {
     return res;
   }
   
+  // Also allow emergency-reset page
+  if (req.nextUrl.pathname === '/emergency-reset') {
+    return res;
+  }
+  
   // Public paths that should never redirect users regardless of auth state
   const isPublicPath = 
     req.nextUrl.pathname === '/' || 
@@ -60,16 +65,49 @@ export async function middleware(req: NextRequest) {
       }
     });
     
-    const { data: { session } } = await supabase.auth.getSession();
+    // Check if this is a direct page load (not an API call or navigation)
+    const isPageLoad = !req.headers.get('x-middleware-prefetch') && 
+                      req.headers.get('sec-fetch-dest') === 'document';
     
-    // For authentication paths: if user is already logged in, redirect to dashboard
-    if (session && isAuthPath) {
-      return NextResponse.redirect(new URL('/dashboard', req.url));
+    // If this is a dashboard page load, check for a loading flag in the request
+    const isDashboardPage = req.nextUrl.pathname.startsWith('/dashboard');
+    const hasLoadingFlag = req.cookies.get('profile_loading_in_progress');
+    
+    // If we're in the middle of loading the profile, allow access to the dashboard
+    if (isDashboardPage && hasLoadingFlag && isPageLoad) {
+      console.log('Profile loading in progress, allowing access to dashboard');
+      return res;
     }
     
-    // For protected paths: if user is not logged in, redirect to sign in
-    if (!session && isProtectedPath) {
-      return NextResponse.redirect(new URL('/signin', req.url));
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (session) {
+      // Set a cookie flag for profile loading in progress
+      if (isDashboardPage && isPageLoad) {
+        const response = NextResponse.next();
+        response.cookies.set('profile_loading_in_progress', 'true', { 
+          maxAge: 30, // 30 seconds
+          path: '/',
+        });
+        return response;
+      }
+      
+      // For authentication paths: if user is already logged in, redirect to dashboard
+      if (isAuthPath) {
+        return NextResponse.redirect(new URL('/dashboard', req.url));
+      }
+    } else {
+      // Clear the loading flag if no session
+      if (isDashboardPage) {
+        const response = NextResponse.redirect(new URL('/signin', req.url));
+        response.cookies.delete('profile_loading_in_progress');
+        return response;
+      }
+      
+      // For protected paths: if user is not logged in, redirect to sign in
+      if (isProtectedPath) {
+        return NextResponse.redirect(new URL('/signin', req.url));
+      }
     }
     
     return res;
@@ -83,6 +121,11 @@ export async function middleware(req: NextRequest) {
     
     // Don't redirect from auth paths, let them work normally
     if (isAuthPath) {
+      return res;
+    }
+    
+    // Allow access to emergency-reset page even if there's an error
+    if (req.nextUrl.pathname === '/emergency-reset') {
       return res;
     }
     
@@ -106,6 +149,7 @@ export const config = {
     '/auth/:path*',
     '/reset-password',
     '/email-sent',
+    '/emergency-reset',
     // List specific paths instead of using negative lookahead with capturing groups
     '/:path*',
   ],

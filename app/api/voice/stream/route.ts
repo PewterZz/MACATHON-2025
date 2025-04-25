@@ -1,23 +1,15 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { WebSocketServer } from 'ws';
 import { triage } from '@/lib/ai';
+import { storeConversation } from '@/lib/weaviate';
 import OpenAI from 'openai';
-import weaviate from 'weaviate-ts-client';
+import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-});
-
-// Initialize Weaviate client
-const weaviateClient = weaviate.client({
-  scheme: process.env.WEAVIATE_SCHEME || 'https',
-  host: process.env.WEAVIATE_HOST || 'localhost:8080',
-  apiKey: process.env.WEAVIATE_API_KEY ? 
-    new weaviate.ApiKey(process.env.WEAVIATE_API_KEY) : 
-    undefined,
 });
 
 // Speech-to-text using Whisper API
@@ -63,40 +55,15 @@ const textToSpeech = async (text: string): Promise<ArrayBuffer> => {
 
 // Store conversation in Weaviate
 const storeInWeaviate = async (callSid: string, transcript: string, aiResponse: string) => {
-  try {
-    // Check if the class exists, if not create it
-    const classObj = {
-      class: 'CallTranscript',
-      properties: [
-        { name: 'callSid', dataType: ['string'] },
-        { name: 'transcript', dataType: ['text'] },
-        { name: 'aiResponse', dataType: ['text'] },
-        { name: 'timestamp', dataType: ['date'] }
-      ],
-    };
-    
-    // Create the schema class if it doesn't exist
-    try {
-      await weaviateClient.schema.classCreator().withClass(classObj).do();
-    } catch (e) {
-      // Class might already exist, which is fine
+  return storeConversation({
+    className: 'VoiceChat',
+    data: {
+      callSid,
+      transcript,
+      aiResponse,
+      timestamp: new Date().toISOString()
     }
-    
-    // Add the data object
-    await weaviateClient.data.creator()
-      .withClassName('CallTranscript')
-      .withProperties({
-        callSid,
-        transcript,
-        aiResponse,
-        timestamp: new Date().toISOString(),
-      })
-      .do();
-      
-    console.log(`Stored conversation in Weaviate for call ${callSid}`);
-  } catch (error) {
-    console.error('Error storing in Weaviate:', error);
-  }
+  });
 };
 
 // Get AI response to user input
@@ -188,7 +155,9 @@ export async function GET(req: NextRequest) {
                 }
                 
                 // Store in Weaviate
-                storeInWeaviate(callSid, transcriptText, aiResponse);
+                storeInWeaviate(callSid, transcriptText, aiResponse).catch(err => {
+                  console.error('Non-blocking Weaviate storage error:', err);
+                });
                 
                 // Create a request once if not already done
                 if (!requestCreated) {

@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { Device } from "twilio-client"
+import { useState, useCallback, useEffect } from "react"
+// Import Device dynamically to avoid SSR issues
+// import { Device } from "twilio-client"
 
 interface UseVoiceCallReturn {
   isConnected: boolean
@@ -13,13 +14,47 @@ interface UseVoiceCallReturn {
 }
 
 export function useVoiceCall(requestId: string): UseVoiceCallReturn {
-  const [device, setDevice] = useState<Device | null>(null)
+  const [device, setDevice] = useState<any | null>(null)
   const [connection, setConnection] = useState<any>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [isConnecting, setIsConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isClientLoaded, setIsClientLoaded] = useState(false)
+  const [Device, setDevice_] = useState<any>(null)
+
+  // Dynamically load the Twilio Device on the client side
+  useEffect(() => {
+    let isMounted = true
+    
+    const loadTwilioClient = async () => {
+      try {
+        // Dynamically import twilio-client
+        const twilioModule = await import('twilio-client')
+        if (isMounted) {
+          setDevice_(twilioModule.Device)
+          setIsClientLoaded(true)
+        }
+      } catch (err) {
+        console.error('Error loading Twilio client:', err)
+        if (isMounted) {
+          setError('Failed to load voice call system. Please try again later.')
+        }
+      }
+    }
+    
+    loadTwilioClient()
+    
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const setupDevice = useCallback(async () => {
+    if (!isClientLoaded || !Device) {
+      setError('Voice call system not ready yet. Please try again.')
+      return null
+    }
+    
     try {
       // Get Twilio token from your API
       const response = await fetch("/api/twilio/token")
@@ -70,9 +105,14 @@ export function useVoiceCall(requestId: string): UseVoiceCallReturn {
       setIsConnecting(false)
       return null
     }
-  }, [])
+  }, [Device, isClientLoaded])
 
   const startCall = useCallback(async () => {
+    if (!isClientLoaded) {
+      setError('Voice call system not ready yet. Please try again.')
+      return
+    }
+    
     try {
       setError(null)
       setIsConnecting(true)
@@ -96,7 +136,7 @@ export function useVoiceCall(requestId: string): UseVoiceCallReturn {
       setError(err.message || "Failed to start voice call")
       setIsConnecting(false)
     }
-  }, [device, requestId, setupDevice])
+  }, [device, requestId, setupDevice, isClientLoaded])
 
   const endCall = useCallback(() => {
     try {

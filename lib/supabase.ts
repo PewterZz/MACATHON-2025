@@ -27,8 +27,32 @@ export const supabaseAdmin = createClient<Database>(
   }
 );
 
+// Function to clear old auth tokens
+const clearOldAuthTokens = () => {
+  if (typeof window === 'undefined') return;
+  
+  try {
+    // Clear the old project's auth token
+    const oldTokens = [
+      'sb-mvhgizltbvswhntrwjzt-auth-token',
+      'supabase.auth.token',
+      'sb-auth-token-code-verifier'
+    ];
+    
+    oldTokens.forEach(tokenName => {
+      window.localStorage.removeItem(tokenName);
+      document.cookie = `${tokenName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+    });
+  } catch (e) {
+    console.error('Error clearing old auth tokens:', e);
+  }
+};
+
 // For use in client components
 export const createSupabaseClient = () => {
+  // Clear old auth tokens on client initialization
+  clearOldAuthTokens();
+  
   // Check if the environment variables are available
   if (!supabaseUrl || !supabaseAnonKey) {
     console.error('Supabase client creation failed: Missing environment variables');
