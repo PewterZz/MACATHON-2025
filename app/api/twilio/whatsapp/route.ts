@@ -50,8 +50,38 @@ const generateReferenceCode = () => {
   return randomUUID().substring(0, 6).toUpperCase();
 };
 
-// Get AI response to user input
-const getAIResponse = async (userMessage: string, conversationHistory: string[] = [], isNewConversation: boolean = false, referenceCode?: string): Promise<string> => {
+// Fetch conversation history - Return sender info as well
+const getConversationHistory = async (requestId: number): Promise<{ sender: string, content: string }[]> => {
+  try {
+    console.log(`Fetching conversation history for request ID: ${requestId}`);
+    
+    const { data, error } = await supabaseAdmin
+      .from('messages')
+      .select('sender, content') // Keep sender
+      .eq('request_id', requestId)
+      .order('created_at', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching conversation history from Supabase:', error);
+      return [];
+    }
+    
+    if (!data || data.length === 0) {
+      console.log('No conversation history found');
+      return [];
+    }
+    
+    console.log(`Found ${data.length} messages in history`);
+    // Return the full objects
+    return data.map(msg => ({ sender: msg.sender, content: msg.content }));
+  } catch (error) {
+    console.error('Error in getConversationHistory:', error);
+    return [];
+  }
+};
+
+// Get AI response to user input - Use sender info from history
+const getAIResponse = async (userMessage: string, conversationHistory: { sender: string, content: string }[] = [], isNewConversation: boolean = false, referenceCode?: string): Promise<string> => {
   try {
     console.log('Getting AI response with OpenAI');
     
@@ -64,24 +94,29 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
       Never identify yourself as AI.`
       : `You are a compassionate mental health first responder via WhatsApp. 
       Your role is to provide immediate support, validation, and guidance to someone in distress.
-      Continue the conversation naturally, referring to previous messages as appropriate.
+      Carefully review the previous messages provided in the conversation history to understand the context.
+      Continue the conversation naturally, referring to previous messages (like the user's name if mentioned) appropriately.
       If they seem to need additional support, remind them they can access our platform at ${APP_URL}.
-      Be warm, empathetic and conversational. Never identify yourself as AI.`;
+      Be warm, empathetic and conversational. Never identify yourself as AI.`; // Strengthened prompt
     
-    const messages = [
+    const messages: { role: "system" | "user" | "assistant", content: string }[] = [
       { role: "system", content: systemMessage }
     ];
     
-    // Add conversation history if available
+    // Add conversation history if available - using sender info
     if (conversationHistory.length > 0) {
-      for (let i = 0; i < conversationHistory.length; i++) {
-        const role = i % 2 === 0 ? "user" : "assistant";
-        messages.push({ role, content: conversationHistory[i] });
-      }
+      console.log('Adding conversation history to prompt:', conversationHistory);
+      conversationHistory.forEach(msg => {
+        // Map 'caller' to 'user' and 'ai' or 'assistant' to 'assistant'
+        const role = (msg.sender === 'caller') ? 'user' : 'assistant';
+        messages.push({ role, content: msg.content });
+      });
     }
     
     // Add the current message
     messages.push({ role: "user", content: userMessage });
+    
+    console.log('Sending messages to OpenAI:', JSON.stringify(messages, null, 2)); // Log the exact messages sent
     
     const response = await openai.chat.completions.create({
       model: "gpt-4",
@@ -102,35 +137,6 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
   } catch (error) {
     console.error('Error getting AI response from OpenAI:', error);
     return "I'm here to listen. Please tell me what's on your mind. (Note: We're experiencing some technical difficulties, but I'm still here to help)";
-  }
-};
-
-// Fetch conversation history
-const getConversationHistory = async (requestId: number): Promise<string[]> => {
-  try {
-    console.log(`Fetching conversation history for request ID: ${requestId}`);
-    
-    const { data, error } = await supabaseAdmin
-      .from('messages')
-      .select('sender, content')
-      .eq('request_id', requestId)
-      .order('created_at', { ascending: true });
-    
-    if (error) {
-      console.error('Error fetching conversation history from Supabase:', error);
-      return [];
-    }
-    
-    if (!data || data.length === 0) {
-      console.log('No conversation history found');
-      return [];
-    }
-    
-    console.log(`Found ${data.length} messages in history`);
-    return data.map(msg => msg.content);
-  } catch (error) {
-    console.error('Error in getConversationHistory:', error);
-    return [];
   }
 };
 
