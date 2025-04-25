@@ -145,7 +145,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try {
+      // First call Supabase signOut
       await supabase.auth.signOut()
+      
+      // Manually clear the user state
+      setUser(null)
+      
+      // Clear any other auth-related state or local storage if needed
+      if (typeof window !== 'undefined') {
+        // Clear any auth-related local storage items
+        localStorage.removeItem('supabase.auth.token')
+        
+        // Clear any other auth-related local storage items you might have
+        // Example: localStorage.removeItem('user-profile')
+      }
     } catch (error) {
       console.error("Sign out failed:", error)
     }

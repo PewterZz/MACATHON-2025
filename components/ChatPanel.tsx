@@ -12,6 +12,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { useToast } from "@/components/ui/use-toast"
 import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
+import { CustomLoader } from "@/components/ui/custom-loader"
 
 interface ChatPanelProps {
   chatId?: string;
@@ -151,7 +152,7 @@ export default function ChatPanel({ chatId }: ChatPanelProps) {
         <div className="flex-1 overflow-y-auto space-y-4 pr-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
           {isLoading ? (
             <div className="flex justify-center p-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+              <CustomLoader size="md" color="default" />
             </div>
           ) : messages.length > 0 ? (
             messages.map((message) => (
@@ -206,7 +207,7 @@ export default function ChatPanel({ chatId }: ChatPanelProps) {
             disabled={isSending || !newMessage.trim()}
           >
             {isSending ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-slate-900 border-t-transparent" />
+              <CustomLoader size="sm" color="default" />
             ) : (
               <Send className="h-4 w-4" />
             )}

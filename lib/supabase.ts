@@ -29,11 +29,30 @@ export const supabaseAdmin = createClient<Database>(
 
 // For use in client components
 export const createSupabaseClient = () => {
-  console.log('Creating Supabase client with:', { hasUrl: Boolean(supabaseUrl), hasKey: Boolean(supabaseAnonKey) });
-  return createClientComponentClient<Database>({
-    supabaseUrl,
-    supabaseKey: supabaseAnonKey,
-  });
+  // Check if the environment variables are available
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('Supabase client creation failed: Missing environment variables', { 
+      hasUrl: Boolean(supabaseUrl), 
+      hasKey: Boolean(supabaseAnonKey),
+      url: supabaseUrl ? supabaseUrl.substring(0, 10) + '...' : 'undefined',
+    });
+    // We still attempt to create the client, but it will likely fail on operations
+  }
+
+  try {
+    return createClientComponentClient<Database>({
+      supabaseUrl,
+      supabaseKey: supabaseAnonKey,
+    });
+  } catch (error) {
+    console.error('Error creating Supabase client:', error);
+    // Throw the error for better debugging in development
+    if (process.env.NODE_ENV === 'development') {
+      throw error;
+    }
+    // Return a minimal client that will gracefully fail on operations
+    return createClientComponentClient<Database>();
+  }
 };
 
 // For direct use on the client

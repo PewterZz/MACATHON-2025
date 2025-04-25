@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Tag, ExternalLink, AlertTriangle } from "lucide-react"
 import { useQueue } from "@/hooks/useQueue"
+import { CustomLoader } from "@/components/ui/custom-loader"
 
 interface Request {
   id: string
@@ -94,7 +95,7 @@ export default function RequestCard({ request, profile, refreshQueue }: RequestC
         >
           {isLoading ? (
             <>
-              <div className="h-4 w-4 rounded-full border-2 border-slate-900 border-t-transparent animate-spin" />
+              <CustomLoader size="sm" color="default" className="mr-2" />
               Claiming...
             </>
           ) : (

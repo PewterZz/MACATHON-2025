@@ -94,6 +94,42 @@ DISCORD_APPLICATION_ID=your-discord-application-id
    pnpm dlx supabase db push --db-url=your-supabase-db-url
    ```
 
+## Troubleshooting
+
+### "Failed to fetch requests" Error
+
+If you encounter a "Failed to fetch requests" error in the dashboard, follow these steps:
+
+1. **Check Environment Variables**:
+   Ensure your `.env.local` file has the correct Supabase variables:
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+   SUPABASE_SERVICE_ROLE=your-service-role-key
+   ```
+
+2. **Verify Supabase Service**:
+   - Check if your Supabase project is active and online
+   - Confirm that you have the "requests" table in your database
+
+3. **Clear Browser Cache**:
+   - Try clearing your browser cookies and local storage
+   - Logout and login again to refresh your session
+
+4. **Network Issues**:
+   - Ensure you have an active internet connection
+   - Check if your network has any firewall restrictions for API calls
+
+5. **Developer Tools**:
+   - Open browser developer tools (F12)
+   - Check the Console and Network tabs for more specific error messages
+   - Look for CORS or authentication issues in the error details
+
+If problems persist, try restarting your development server with:
+```
+npm run dev
+```
+
 ## License
 
 MIT 

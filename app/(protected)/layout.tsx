@@ -17,12 +17,24 @@ export default function ProtectedLayout({
   const [isNavigating, setIsNavigating] = useState(false)
 
   useEffect(() => {
-    if (!isLoading && !user && !isNavigating) {
-      console.log('No user found, redirecting to signin')
-      setIsNavigating(true)
-      router.push("/signin")
+    if (!isLoading) {
+      if (!user && !isNavigating) {
+        console.log('No user found, redirecting to signin')
+        setIsNavigating(true)
+        router.push("/signin")
+      } else if (user) {
+        setIsNavigating(false)
+      }
     }
   }, [user, isLoading, router, isNavigating])
+
+  useEffect(() => {
+    return () => {
+      if (!user && typeof window !== 'undefined') {
+        localStorage.removeItem('supabase.auth.token')
+      }
+    }
+  }, [user])
 
   if (isLoading) {
     return (

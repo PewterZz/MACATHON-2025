@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import RequestCard from "@/components/RequestCard"
@@ -14,11 +14,41 @@ import { Input } from "@/components/ui/input"
 import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
 import { useSessionHistory } from "@/hooks/useSessionHistory"
-import { LogOut, AlertTriangle, RefreshCw, UserPlus, CheckCircle, Clock, FileText, PieChart, MessageCircle, Coffee, ArrowUpRight, BellRing } from "lucide-react"
+import { LogOut, AlertTriangle, RefreshCw, UserPlus, CheckCircle, Clock, FileText, PieChart, MessageCircle, Coffee, ArrowUpRight, BellRing, Settings } from "lucide-react"
 import { createSupabaseClient } from "@/lib/supabase"
 import { useToast } from "@/components/ui/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import { motion } from "framer-motion"
+import { LoadingTimeout, LoadingErrorDisplay } from "@/components/LoadingTimeout"
+import { CustomLoader } from "@/components/ui/custom-loader"
+
+// Animation variants for tab content
+const tabContentVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3 } }
+}
+
+// Animation variants for card elements
+const cardVariants = {
+  hidden: { opacity: 0, scale: 0.95 },
+  visible: { 
+    opacity: 1, 
+    scale: 1, 
+    transition: { duration: 0.3 } 
+  }
+}
+
+// Animation variants for staggered items
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1
+    }
+  }
+}
 
 export default function HelperDashboard() {
   const { queue: liveQueue, isLoading, claimRequest, refreshQueue } = useQueue()
@@ -33,9 +63,15 @@ export default function HelperDashboard() {
   const [isFixingProfile, setIsFixingProfile] = useState(false)
   const [availability, setAvailability] = useState('available')
   const [helpedCount, setHelpedCount] = useState(0)
+  const [email, setEmail] = useState('')
+  const [contactEmail, setContactEmail] = useState('')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
   const searchParams = useSearchParams()
   const router = useRouter()
   const { toast } = useToast()
+  const [queueLoadingError, setQueueLoadingError] = useState(false)
+  const [claimedLoadingError, setClaimedLoadingError] = useState(false)
+  const [historyLoadingError, setHistoryLoadingError] = useState(false)
   
   // Get current tab from URL or default to 'queue'
   const currentTab = searchParams?.get('tab') || 'queue'
@@ -53,7 +89,16 @@ export default function HelperDashboard() {
     if (profile?.name) {
       setName(profile.name)
     }
-  }, [profile?.name])
+    if (user?.email) {
+      setEmail(user.email)
+      if (!profile?.contact_email) {
+        setContactEmail(user.email)
+      }
+    }
+    if (profile?.contact_email) {
+      setContactEmail(profile.contact_email)
+    }
+  }, [profile?.name, profile?.contact_email, user?.email])
 
   // Fetch count of helped people
   useEffect(() => {
@@ -116,14 +161,27 @@ export default function HelperDashboard() {
       await claimRequest(requestId)
       setClaimedRequests(prev => [...prev, requestId])
       setActiveChat(requestId)
+      
+      toast({
+        title: "Request claimed",
+        description: "You have successfully claimed this request.",
+        variant: "default"
+      })
     } catch (error) {
       console.error("Failed to claim request:", error)
+      toast({
+        title: "Error",
+        description: "Failed to claim request. Please try again.",
+        variant: "destructive"
+      })
     }
   }
   
   const refreshClaimedRequests = async () => {
     try {
       setRefreshingClaimed(true)
+      setClaimedLoadingError(false)
+      
       const supabase = createSupabaseClient()
       const { data, error } = await supabase
         .from('requests')
@@ -136,6 +194,12 @@ export default function HelperDashboard() {
       setClaimedRequests(data.map(r => r.id))
     } catch (error) {
       console.error("Failed to refresh claimed requests:", error)
+      setClaimedLoadingError(true)
+      toast({
+        title: "Error",
+        description: "Failed to load your active chats. Please try again.",
+        variant: "destructive"
+      })
     } finally {
       setRefreshingClaimed(false)
     }
@@ -202,6 +266,38 @@ export default function HelperDashboard() {
       description: `You are now ${newStatus}`,
       variant: "default"
     })
+  }
+
+  const handleSaveProfile = async () => {
+    if (profile) {
+      try {
+        setIsSavingProfile(true)
+        await updateProfile({ 
+          name: name.trim(),
+          contact_email: contactEmail.trim() 
+        })
+        toast({
+          title: "Profile updated",
+          description: "Your profile has been updated successfully.",
+          variant: "default"
+        })
+      } catch (error) {
+        console.error("Failed to update profile:", error)
+        toast({
+          title: "Error",
+          description: "Failed to update your profile. Please try again.",
+          variant: "destructive"
+        })
+      } finally {
+        setIsSavingProfile(false)
+      }
+    }
+  }
+
+  // Add wrapper for refreshHistory that handles errors
+  const handleRefreshHistory = () => {
+    setHistoryLoadingError(false)
+    refreshHistory()
   }
 
   const historyColumns = [
@@ -309,6 +405,14 @@ export default function HelperDashboard() {
               <PieChart className="mr-2 h-4 w-4" />
               <span>Analytics</span>
             </Button>
+            <Button 
+              variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'settings' ? 'bg-slate-700 text-[#3ECF8E]' : 'text-slate-300 hover:text-slate-100 hover:bg-slate-700'}`}
+              onClick={() => handleTabChange('settings')}
+            >
+              <Settings className="mr-2 h-4 w-4" />
+              <span>Settings</span>
+            </Button>
           </div>
           
           <div className="absolute bottom-4 left-4 right-4">
@@ -344,49 +448,61 @@ export default function HelperDashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <Card className="bg-slate-800 border-slate-700">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-slate-100 text-sm font-medium">People Helped</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-2xl font-bold text-slate-100">{helpedCount}</div>
-                    <div className="p-2 bg-green-500/10 rounded-full">
-                      <UserPlus className="h-4 w-4 text-[#3ECF8E]" />
+            {/* Stats cards - moved outside TabsContent to appear on all tabs */}
+            <motion.div 
+              className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
+              variants={containerVariants}
+              initial="hidden"
+              animate="visible"
+            >
+              <motion.div variants={cardVariants}>
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-slate-100 text-sm font-medium">People Helped</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <div className="text-2xl font-bold text-slate-100">{helpedCount}</div>
+                      <div className="p-2 bg-green-500/10 rounded-full">
+                        <UserPlus className="h-4 w-4 text-[#3ECF8E]" />
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </motion.div>
               
-              <Card className="bg-slate-800 border-slate-700">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-slate-100 text-sm font-medium">Active Sessions</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-2xl font-bold text-slate-100">{claimedRequests.length}</div>
-                    <div className="p-2 bg-blue-500/10 rounded-full">
-                      <MessageCircle className="h-4 w-4 text-blue-500" />
+              <motion.div variants={cardVariants}>
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-slate-100 text-sm font-medium">Active Sessions</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <div className="text-2xl font-bold text-slate-100">{claimedRequests.length}</div>
+                      <div className="p-2 bg-blue-500/10 rounded-full">
+                        <MessageCircle className="h-4 w-4 text-blue-500" />
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </motion.div>
               
-              <Card className="bg-slate-800 border-slate-700">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-slate-100 text-sm font-medium">Waiting Requests</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-2xl font-bold text-slate-100">{queue.length}</div>
-                    <div className="p-2 bg-yellow-500/10 rounded-full">
-                      <Clock className="h-4 w-4 text-yellow-500" />
+              <motion.div variants={cardVariants}>
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-slate-100 text-sm font-medium">Waiting Requests</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <div className="text-2xl font-bold text-slate-100">{queue.length}</div>
+                      <div className="p-2 bg-yellow-500/10 rounded-full">
+                        <Clock className="h-4 w-4 text-yellow-500" />
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </motion.div>
 
             <TabsList className="bg-slate-800 border-slate-700 hidden">
               <TabsTrigger value="queue" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
@@ -404,48 +520,84 @@ export default function HelperDashboard() {
               <TabsTrigger value="analytics" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
                 Analytics
               </TabsTrigger>
+              <TabsTrigger value="settings" className="data-[state=active]:bg-[#3ECF8E] data-[state=active]:text-slate-900">
+                Settings
+              </TabsTrigger>
             </TabsList>
             
             {/* Queue tab content */}
             <TabsContent value="queue" className="mt-0">
-              <Card className="bg-slate-800 border-slate-700">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-lg font-semibold text-slate-100">Support Queue</CardTitle>
-                  <Button variant="outline" size="sm" onClick={refreshQueue} disabled={isLoading} className="border-slate-700 hover:bg-slate-700">
-                    <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </Button>
-                </CardHeader>
-                <CardContent>
-                  {isLoading ? (
-                    <div className="flex justify-center p-4">
-                      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#3ECF8E]"></div>
-                    </div>
-                  ) : queue.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center">
-                      <Coffee className="h-12 w-12 text-slate-500 mb-4" />
-                      <h3 className="text-lg font-medium text-slate-100">Queue Empty</h3>
-                      <p className="text-slate-400 mt-2 max-w-md">There are currently no requests waiting for assistance. Take a moment to relax!</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {queue.map((request) => (
-                        <RequestCard
-                          key={request.id}
-                          request={request}
-                          onClaim={() => handleClaimRequest(request.id)}
-                          className="bg-slate-700 border-slate-600 hover:border-[#3ECF8E]/50"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              <motion.div
+                variants={tabContentVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="text-lg font-semibold text-slate-100">Support Queue</CardTitle>
+                    <Button variant="outline" size="sm" onClick={refreshQueue} disabled={isLoading} className="border-slate-700 hover:bg-slate-700">
+                      <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <LoadingTimeout 
+                      isLoading={isLoading} 
+                      onTimeout={() => {
+                        setQueueLoadingError(true)
+                        console.warn("Queue loading timed out after 10 seconds")
+                      }}
+                      timeoutMs={10000}
+                    />
+                    {isLoading ? (
+                      <div className="flex justify-center p-4">
+                        <CustomLoader size="lg" color="default" label="Loading requests..." />
+                      </div>
+                    ) : queueLoadingError ? (
+                      <LoadingErrorDisplay 
+                        title="Failed to Load Queue"
+                        description="There was a problem loading the request queue."
+                        onRetry={refreshQueue}
+                        icon={AlertTriangle}
+                        theme="slate"
+                      />
+                    ) : queue.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <Coffee className="h-12 w-12 text-slate-500 mb-4" />
+                        <h3 className="text-lg font-medium text-slate-100">Queue Empty</h3>
+                        <p className="text-slate-400 mt-2 max-w-md">There are currently no requests waiting for assistance. Take a moment to relax!</p>
+                      </div>
+                    ) : (
+                      <motion.div 
+                        className="space-y-4"
+                        variants={containerVariants}
+                        initial="hidden"
+                        animate="visible"
+                      >
+                        {queue.map((request) => (
+                          <motion.div key={request.id} variants={cardVariants}>
+                            <RequestCard
+                              request={request}
+                              onClaim={() => handleClaimRequest(request.id)}
+                              className="bg-slate-700 border-slate-600 hover:border-[#3ECF8E]/50"
+                            />
+                          </motion.div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
             </TabsContent>
             
             {/* Active chats tab content */}
             <TabsContent value="active" className="mt-0">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+              <motion.div 
+                className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full"
+                variants={tabContentVariants}
+                initial="hidden"
+                animate="visible"
+              >
                 <div className="lg:col-span-1 space-y-4">
                   <Card className="bg-slate-800 border-slate-700">
                     <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -462,10 +614,27 @@ export default function HelperDashboard() {
                       </Button>
                     </CardHeader>
                     <CardContent>
+                      <LoadingTimeout 
+                        isLoading={refreshingClaimed} 
+                        onTimeout={() => {
+                          setRefreshingClaimed(false)
+                          setClaimedLoadingError(true)
+                          console.warn("Claimed requests loading timed out after 10 seconds")
+                        }}
+                        timeoutMs={10000}
+                      />
                       {refreshingClaimed ? (
                         <div className="flex justify-center p-4">
-                          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+                          <CustomLoader size="lg" color="default" label="Loading your active chats..." />
                         </div>
+                      ) : claimedLoadingError ? (
+                        <LoadingErrorDisplay 
+                          title="Failed to Load Chats"
+                          description="There was a problem loading your active chats."
+                          onRetry={refreshClaimedRequests}
+                          icon={AlertTriangle}
+                          theme="slate"
+                        />
                       ) : claimedRequests.length === 0 ? (
                         <div className="text-center py-8">
                           <MessageCircle className="h-12 w-12 text-slate-500 mx-auto mb-4" />
@@ -549,42 +718,225 @@ export default function HelperDashboard() {
                     </Card>
                   )}
                 </div>
-              </div>
+              </motion.div>
             </TabsContent>
             
             {/* Rest of the tabs content */}
             <TabsContent value="history">
-              <Card className="bg-slate-800 border-slate-700">
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-slate-100">Session History</CardTitle>
-                    <CardDescription className="text-slate-300">View your past help sessions and outcomes</CardDescription>
-                  </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="flex items-center gap-1.5 border-slate-700 text-slate-100 hover:bg-slate-700"
-                    onClick={refreshHistory}
-                    disabled={isHistoryLoading}
-                  >
-                    <RefreshCw className={`h-4 w-4 ${isHistoryLoading ? 'animate-spin' : ''}`} />
-                    Refresh
-                  </Button>
-                </CardHeader>
-                <CardContent>
-                  {isHistoryLoading ? (
-                    <div className="flex justify-center p-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+              <motion.div
+                variants={tabContentVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                      <CardTitle className="text-slate-100">Session History</CardTitle>
+                      <CardDescription className="text-slate-300">View your past help sessions and outcomes</CardDescription>
                     </div>
-                  ) : history.length > 0 ? (
-                    <DataTable columns={historyColumns} data={history} />
-                  ) : (
-                    <div className="text-center p-4">
-                      <p className="text-slate-300">No session history available yet.</p>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="flex items-center gap-1.5 border-slate-700 text-slate-100 hover:bg-slate-700"
+                      onClick={handleRefreshHistory}
+                      disabled={isHistoryLoading}
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isHistoryLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <LoadingTimeout 
+                      isLoading={isHistoryLoading} 
+                      onTimeout={() => {
+                        setHistoryLoadingError(true)
+                        console.warn("History loading timed out after 10 seconds")
+                      }}
+                      timeoutMs={10000}
+                    />
+                    {isHistoryLoading ? (
+                      <div className="flex justify-center p-8">
+                        <CustomLoader size="lg" color="default" label="Loading session history..." />
+                      </div>
+                    ) : historyLoadingError ? (
+                      <LoadingErrorDisplay 
+                        title="Failed to Load History"
+                        description="There was a problem loading your session history."
+                        onRetry={handleRefreshHistory}
+                        icon={AlertTriangle}
+                        theme="slate"
+                      />
+                    ) : history.length > 0 ? (
+                      <DataTable columns={historyColumns} data={history} />
+                    ) : (
+                      <div className="text-center p-4">
+                        <p className="text-slate-300">No session history available yet.</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </TabsContent>
+            
+            {/* Settings tab content */}
+            <TabsContent value="settings" className="mt-0">
+              <motion.div
+                variants={tabContentVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                <Card className="bg-slate-800 border-slate-700">
+                  <CardHeader>
+                    <CardTitle className="text-xl text-slate-100">Profile Settings</CardTitle>
+                    <CardDescription className="text-slate-300">
+                      Manage your helper profile information and preferences
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-6">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label htmlFor="name" className="text-sm font-medium text-slate-100">
+                            Display Name
+                          </label>
+                          <Input
+                            id="name"
+                            placeholder="Your name"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-400"
+                          />
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <label htmlFor="email" className="text-sm font-medium text-slate-100">
+                            Email Address
+                          </label>
+                          <Input
+                            id="email"
+                            type="email"
+                            value={email}
+                            disabled
+                            className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-400 opacity-70"
+                          />
+                          <p className="text-xs text-slate-400">This is your account email and cannot be changed</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <label htmlFor="contactEmail" className="text-sm font-medium text-slate-100">
+                            Contact Email
+                          </label>
+                          <Input
+                            id="contactEmail"
+                            type="email"
+                            placeholder="Contact email address"
+                            value={contactEmail}
+                            onChange={(e) => setContactEmail(e.target.value)}
+                            className="bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-400"
+                          />
+                          <p className="text-xs text-slate-400">This email will be used for notifications</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2 pt-4 border-t border-slate-700">
+                        <h3 className="text-lg font-medium text-slate-100">Helper Preferences</h3>
+                        
+                        <div className="flex items-center justify-between py-2">
+                          <div>
+                            <p className="text-sm font-medium text-slate-100">Auto-assign Requests</p>
+                            <p className="text-xs text-slate-300">Automatically assign new requests when you're available</p>
+                          </div>
+                          <Switch
+                            id="auto-assign-settings"
+                            checked={autoAssign}
+                            onCheckedChange={setAutoAssign}
+                            className="data-[state=checked]:bg-[#3ECF8E]"
+                          />
+                        </div>
+                        
+                        <div className="flex items-center justify-between py-2">
+                          <div>
+                            <p className="text-sm font-medium text-slate-100">Email Notifications</p>
+                            <p className="text-xs text-slate-300">Receive email updates about your assigned requests</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="emailNotifications"
+                              className="rounded-sm bg-slate-900 border-slate-700 text-[#3ECF8E]"
+                              defaultChecked
+                            />
+                            <label htmlFor="emailNotifications" className="text-sm text-slate-100">Enabled</label>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between py-2">
+                          <div>
+                            <p className="text-sm font-medium text-slate-100">Browser Notifications</p>
+                            <p className="text-xs text-slate-300">Receive browser notifications for new messages and requests</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="browserNotifications"
+                              className="rounded-sm bg-slate-900 border-slate-700 text-[#3ECF8E]"
+                              defaultChecked
+                            />
+                            <label htmlFor="browserNotifications" className="text-sm text-slate-100">Enabled</label>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between py-2">
+                          <div>
+                            <p className="text-sm font-medium text-slate-100">AI Assistance</p>
+                            <p className="text-xs text-slate-300">Get AI-powered insights while helping students</p>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="aiAssistance"
+                              className="rounded-sm bg-slate-900 border-slate-700 text-[#3ECF8E]"
+                              defaultChecked
+                            />
+                            <label htmlFor="aiAssistance" className="text-sm text-slate-100">Enabled</label>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-end">
+                        <LoadingTimeout 
+                          isLoading={isSavingProfile} 
+                          onTimeout={() => {
+                            setIsSavingProfile(false)
+                            toast({
+                              title: "Saving taking too long",
+                              description: "Please try again. If the problem persists, contact support.",
+                              variant: "destructive"
+                            })
+                          }}
+                          timeoutMs={8000}
+                        />
+                        <Button 
+                          onClick={handleSaveProfile}
+                          disabled={isSavingProfile}
+                          className="bg-[#3ECF8E] hover:bg-[#3ECF8E]/90 text-slate-900 ml-auto"
+                        >
+                          {isSavingProfile ? (
+                            <>
+                              <CustomLoader size="sm" color="default" className="mr-2" />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              Save Changes
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </motion.div>
             </TabsContent>
           </Tabs>
         </div>

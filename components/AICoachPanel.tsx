@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Bot, AlertTriangle, CheckCircle, ArrowRight } from "lucide-react"
 import { CoachingResponse } from "@/lib/ai"
+import { CustomLoader } from "@/components/ui/custom-loader"
 
 interface AICoachPanelProps {
   requestId: string
@@ -73,7 +74,7 @@ export default function AICoachPanel({ requestId, messages }: AICoachPanelProps)
         <CardContent>
           {isLoading ? (
             <div className="flex justify-center p-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#3ECF8E]"></div>
+              <CustomLoader size="md" color="default" />
             </div>
           ) : coaching ? (
             <div className="space-y-4">
