@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { ArrowRight, Heart, Shield } from "lucide-react"
+import { ArrowRight, Heart, Shield, KeyRound } from "lucide-react"
+import { Input } from "@/components/ui/input"
 
 export default function Home() {
   return (
@@ -68,12 +69,37 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-24 text-center">
-          <h2 className="text-2xl font-bold mb-4 text-slate-100">How It Works</h2>
-          <p className="text-slate-300 max-w-2xl mx-auto">
-            Meld connects students in crisis with trained helpers who have been through similar
-            experiences. Our AI-powered system matches you with the right helper for your specific situation.
-          </p>
+        {/* How It Works + Reference Code Section in a grid */}
+        <div className="mt-12 grid md:grid-cols-2 gap-12 relative z-10">
+          {/* How It Works Section - no box, just text */}
+          <div className="flex flex-col justify-center p-4">
+            <h2 className="text-2xl font-bold mb-4 text-slate-100">How It Works</h2>
+            <p className="text-slate-300">
+              Meld connects students in crisis with trained helpers who have been through similar
+              experiences. Our AI-powered system matches you with the right helper for your specific situation.
+            </p>
+          </div>
+
+          {/* Reference Code Section */}
+          <div className="bg-slate-800 p-8 rounded-xl border border-slate-700 shadow-lg">
+            <div className="h-12 w-12 rounded-full bg-[#3ECF8E]/20 flex items-center justify-center mb-6">
+              <KeyRound className="h-6 w-6 text-[#3ECF8E]" />
+            </div>
+            <h2 className="text-2xl font-bold mb-4 text-slate-100">Have a Reference Code?</h2>
+            <p className="text-slate-300 mb-6">
+              If you received a reference code via SMS or WhatsApp, enter it below to access your conversation.
+            </p>
+            <form className="flex space-x-2" action="/api/reference-code" method="GET">
+              <Input 
+                name="code" 
+                placeholder="Enter your code" 
+                className="bg-slate-700 border-slate-600 text-slate-100 placeholder:text-slate-400"
+              />
+              <Button type="submit" className="bg-[#3ECF8E] hover:bg-[#3ECF8E]/90 text-slate-900">
+                Access
+              </Button>
+            </form>
+          </div>
         </div>
       </main>
 

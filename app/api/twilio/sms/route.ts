@@ -3,8 +3,12 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { triage } from '@/lib/ai';
 import OpenAI from 'openai';
 import { storeConversation } from '@/lib/weaviate';
+import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
+
+// App URL for sharing
+const APP_URL = 'https://meld-git-main-pewterzzs-projects.vercel.app';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -12,30 +16,45 @@ const openai = new OpenAI({
 });
 
 // Store conversation in Weaviate
-const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string) => {
+const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string, requestId: number) => {
   return storeConversation({
     className: 'SMSChat',
     data: {
       phoneNumber,
       userMessage,
       aiResponse,
+      requestId: requestId.toString(),
       timestamp: new Date().toISOString()
     }
   });
 };
 
+// Generate a unique reference code
+const generateReferenceCode = () => {
+  // Generate a 6-character alphanumeric code
+  return randomUUID().substring(0, 6).toUpperCase();
+};
+
 // Get AI response to user input
-const getAIResponse = async (userMessage: string, conversationHistory: string[] = []): Promise<string> => {
+const getAIResponse = async (userMessage: string, conversationHistory: string[] = [], isNewConversation: boolean = false, referenceCode?: string): Promise<string> => {
   try {
+    const systemMessage = isNewConversation 
+      ? `You are a compassionate mental health first responder via SMS. 
+      Your role is to provide immediate support, validation, and guidance to someone in distress.
+      Ask questions to understand their situation better. Be empathetic but professional.
+      Let them know they can access our full support platform at ${APP_URL} using reference code ${referenceCode || "[CODE]"}.
+      Focus on asking questions to understand their situation first before suggesting next steps.
+      Keep responses very concise (under 160 characters if possible) since this is SMS.
+      Never identify yourself as AI.`
+      : `You are a compassionate mental health first responder via SMS. 
+      Your role is to provide immediate support, validation, and guidance to someone in distress.
+      Continue the conversation naturally, referring to previous messages as appropriate.
+      If they seem to need additional support, remind them they can access our platform at ${APP_URL}.
+      Keep responses concise (under 160 characters if possible) since this is SMS.
+      Be warm, empathetic and conversational. Never identify yourself as AI.`;
+    
     const messages = [
-      {
-        role: "system",
-        content: `You are a compassionate mental health first responder via SMS. 
-        Your role is to provide immediate support, validation, and guidance to someone in distress.
-        Keep responses conversational, warm, and helpful. 
-        Be very concise (under 160 characters if possible) since this is SMS.
-        Do not identify yourself as an AI - just respond naturally as a supportive listener.`
-      }
+      { role: "system", content: systemMessage }
     ];
     
     // Add conversation history if available
@@ -51,12 +70,20 @@ const getAIResponse = async (userMessage: string, conversationHistory: string[] 
     
     const response = await openai.chat.completions.create({
       model: "gpt-4",
-      messages,
+      messages: messages as any, // Type assertion to satisfy OpenAI API typing
       temperature: 0.7,
       max_tokens: 150,
     });
     
-    return response.choices[0].message.content || "I'm here to listen. What's going on?";
+    let aiResponse = response.choices[0].message.content || "I'm here to listen. What's going on?";
+    
+    // If this is a new conversation and we have a reference code, make sure it's included
+    if (isNewConversation && referenceCode && !aiResponse.includes(referenceCode)) {
+      // For SMS, we need to be extra concise
+      aiResponse += ` Use code ${referenceCode} at ${APP_URL}`;
+    }
+    
+    return aiResponse;
   } catch (error) {
     console.error('Error getting AI response:', error);
     return "I'm here to listen. Please tell me what's on your mind.";
@@ -73,6 +100,7 @@ const getConversationHistory = async (requestId: number): Promise<string[]> => {
       .order('created_at', { ascending: true });
     
     if (error || !data) {
+      console.error('Error fetching conversation history:', error);
       return [];
     }
     
@@ -98,7 +126,7 @@ export async function POST(req: NextRequest) {
     // Check if this is a new conversation or continuing an existing one
     const { data: existingRequest } = await supabaseAdmin
       .from('requests')
-      .select('id, status')
+      .select('id, status, reference_code')
       .eq('channel', 'sms')
       .eq('external_id', from)
       .eq('status', 'open')
@@ -111,7 +139,7 @@ export async function POST(req: NextRequest) {
       const history = await getConversationHistory(existingRequest.id);
       
       // Get AI response with conversation context
-      aiResponse = await getAIResponse(body, history);
+      aiResponse = await getAIResponse(body, history, false, existingRequest.reference_code);
       
       // Add the user message to an existing request
       await supabaseAdmin
@@ -131,8 +159,8 @@ export async function POST(req: NextRequest) {
           content: aiResponse
         });
       
-      // Store in Weaviate (non-blocking)
-      storeInWeaviate(from, body, aiResponse).catch(err => {
+      // Store in Weaviate (non-blocking) with request ID for better tracking
+      storeInWeaviate(from, body, aiResponse, existingRequest.id).catch(err => {
         console.error('Non-blocking Weaviate storage error:', err);
       });
       
@@ -152,10 +180,10 @@ export async function POST(req: NextRequest) {
       // This is a new conversation, analyze with AI
       const result = await triage(body);
       
-      // Get AI response for the initial message
-      aiResponse = await getAIResponse(body);
+      // Generate a reference code for anonymous web access
+      const referenceCode = generateReferenceCode();
       
-      // Create a new request
+      // Create a new request with reference code
       const { data: newRequest, error } = await supabaseAdmin
         .from('requests')
         .insert({
@@ -163,7 +191,8 @@ export async function POST(req: NextRequest) {
           external_id: from,
           summary: result.summary,
           risk: result.risk,
-          status: result.risk >= 0.7 ? 'urgent' : 'open'
+          status: result.risk >= 0.7 ? 'urgent' : 'open',
+          reference_code: referenceCode
         })
         .select()
         .single();
@@ -172,6 +201,9 @@ export async function POST(req: NextRequest) {
         console.error('Error creating request:', error);
         return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
       }
+      
+      // Get AI response for the initial message (with reference code)
+      aiResponse = await getAIResponse(body, [], true, referenceCode);
       
       // Add the initial message
       await supabaseAdmin
@@ -191,8 +223,8 @@ export async function POST(req: NextRequest) {
           content: aiResponse
         });
       
-      // Store in Weaviate (non-blocking)
-      storeInWeaviate(from, body, aiResponse).catch(err => {
+      // Store in Weaviate (non-blocking) with request ID for better tracking
+      storeInWeaviate(from, body, aiResponse, newRequest.id).catch(err => {
         console.error('Non-blocking Weaviate storage error:', err);
       });
       
