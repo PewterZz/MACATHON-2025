@@ -5,7 +5,7 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/context/auth-context"
 import { ProfileProvider } from "@/context/profile-context"
-import { Toaster } from "@/components/ui/toaster"
+import { SimpleToastProvider } from "@/components/SimpleToaster"
 
 const inter = Inter({ 
   subsets: ["latin"],
@@ -28,14 +28,15 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} bg-slate-900 text-slate-100`}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
-          <AuthProvider>
-            <ProfileProvider>
-              {children}
-            </ProfileProvider>
-          </AuthProvider>
-        </ThemeProvider>
-        <Toaster />
+        <SimpleToastProvider>
+          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+            <AuthProvider>
+              <ProfileProvider>
+                {children}
+              </ProfileProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </SimpleToastProvider>
       </body>
     </html>
   )

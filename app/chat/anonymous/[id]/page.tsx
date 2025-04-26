@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, SendIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,11 +15,9 @@ interface Message {
   created_at: string
 }
 
-export default function AnonymousChatPage({ 
-  params 
-}: { 
-  params: { id: string } 
-}) {
+export default function AnonymousChatPage() {
+  const params = useParams<{ id: string }>()
+  const id = params.id
   const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState('')
@@ -43,7 +41,7 @@ export default function AnonymousChatPage({
         const { data, error } = await supabaseClient
           .from('requests')
           .select('id, reference_code, status')
-          .eq('id', params.id)
+          .eq('id', id)
           .eq('reference_code', code)
           .not('status', 'eq', 'closed')
           .maybeSingle()
@@ -59,12 +57,12 @@ export default function AnonymousChatPage({
         
         // Set up real-time subscription
         const channel = supabaseClient
-          .channel(`request-${params.id}`)
+          .channel(`request-${id}`)
           .on('postgres_changes', {
             event: 'INSERT',
             schema: 'public',
             table: 'messages',
-            filter: `request_id=eq.${params.id}`
+            filter: `request_id=eq.${id}`
           }, (payload) => {
             const newMsg = payload.new as Message
             setMessages(prev => [...prev, newMsg])
@@ -81,7 +79,7 @@ export default function AnonymousChatPage({
     }
 
     checkAccess()
-  }, [params.id])
+  }, [id])
 
   const loadMessages = async () => {
     try {
@@ -89,7 +87,7 @@ export default function AnonymousChatPage({
       const { data, error } = await supabaseClient
         .from('messages')
         .select('*')
-        .eq('request_id', params.id)
+        .eq('request_id', id)
         .order('created_at', { ascending: true })
 
       if (error) throw error
@@ -110,7 +108,7 @@ export default function AnonymousChatPage({
       const { error } = await supabaseClient
         .from('messages')
         .insert({
-          request_id: params.id,
+          request_id: id,
           content: newMessage,
           sender: 'caller'
         })
@@ -182,7 +180,7 @@ export default function AnonymousChatPage({
           >
             <p className="text-sm">{message.content}</p>
             <span className="text-xs text-slate-400 mt-1 block">
-              {new Date(message.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              {message.created_at ? new Date(message.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'sending...'}
             </span>
           </div>
         ))}

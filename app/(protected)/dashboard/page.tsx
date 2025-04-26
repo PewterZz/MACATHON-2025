@@ -9,6 +9,9 @@ import { CustomLoader } from "@/components/ui/custom-loader"
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, Bug } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
+import { createSupabaseClient } from "@/lib/supabase"
+import type { RealtimeChannel } from "@supabase/supabase-js"
+import type { Database } from "@/types/supabase"
 
 // Debug panel for tracking state changes
 function DebugPanel({ data }: { data: Record<string, any> }) {
@@ -44,6 +47,7 @@ export default function Dashboard() {
   const [showDebug, setShowDebug] = useState(false)
   const loadStartTime = useRef(Date.now())
   const loadingTime = useRef(0)
+  const channelRef = useRef<RealtimeChannel | null>(null)
   
   // Track loading time
   useEffect(() => {
@@ -157,6 +161,88 @@ export default function Dashboard() {
     return () => clearTimeout(timer)
   }, [profileLoading, authLoading, isFixingProfile])
   
+  // Setup Supabase realtime subscription for new requests
+  useEffect(() => {
+    // Only run if profile is loaded and the user is a helper
+    if (profile?.is_helper) {
+      const supabase = createSupabaseClient();
+      if (!supabase) {
+        console.error("Failed to initialize Supabase client for realtime");
+        return;
+      }
+
+      console.log("Setting up realtime subscription for new requests...");
+
+      const channel = supabase
+        .channel('new-request-notifications')
+        .on<Database['public']['Tables']['requests']['Row']>(
+          'postgres_changes',
+          { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'requests' 
+          },
+          (payload) => {
+            console.log('New request received:', payload.new);
+            const newRequest = payload.new;
+            
+            // Generate a unique ID for the toast if needed
+            const toastId = `new-request-${newRequest.id}`; 
+            
+            toast({
+              id: toastId,
+              title: "✨ New Help Request",
+              description: `${newRequest.summary || 'A new request has arrived.'} (Risk: ${newRequest.risk})`,
+              // Optional: Add an action, e.g., navigate to the request
+              // action: (
+              //   <ToastAction altText="View" onClick={() => console.log('Navigate to request', newRequest.id)}>
+              //     View
+              //   </ToastAction>
+              // ),
+            });
+          }
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            console.log('Subscribed to new requests channel!');
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.error(`Realtime subscription error: ${status}`, err);
+            toast({
+              title: "Realtime Error",
+              description: "Could not connect to live updates. Please refresh.",
+              variant: "destructive",
+            });
+          }
+        });
+
+      channelRef.current = channel;
+
+      // Cleanup function to remove the channel subscription on unmount
+      return () => {
+        if (channelRef.current) {
+          console.log("Removing realtime subscription for new requests.");
+          supabase.removeChannel(channelRef.current)
+            .then(() => console.log("Successfully removed channel."))
+            .catch(err => console.error("Error removing channel:", err));
+          channelRef.current = null; // Clear the ref
+        }
+      };
+    } else {
+       // Ensure cleanup if the user is not a helper or logs out
+       if (channelRef.current) {
+         const supabase = createSupabaseClient();
+         if (supabase) {
+            console.log("Removing realtime subscription (user not helper).");
+            supabase.removeChannel(channelRef.current)
+              .then(() => console.log("Successfully removed channel (user not helper)."))
+              .catch(err => console.error("Error removing channel (user not helper):", err));
+            channelRef.current = null;
+         }
+       }
+    }
+  // Depend on profile?.is_helper to setup/teardown subscription when role changes
+  }, [profile?.is_helper, toast]);
+
   // Debug data to track
   const debugData = {
     profileLoading,

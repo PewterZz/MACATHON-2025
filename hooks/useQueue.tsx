@@ -11,6 +11,8 @@ type RequestWithTags = {
   tags: string[]
   timestamp: string
   channel: string
+  status: string
+  claimed_by: string | null
 }
 
 export function useQueue() {
@@ -77,7 +79,9 @@ export function useQueue() {
           summary: request.summary,
           tags,
           timestamp: timeDisplay,
-          channel: request.channel
+          channel: request.channel,
+          status: request.status,
+          claimed_by: request.claimed_by
         }
       })
 

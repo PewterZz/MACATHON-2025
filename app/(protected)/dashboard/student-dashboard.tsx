@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { LogOut, RefreshCw, Send, Book, MessageCircle, FileText, Clock, User, PlusCircle, School, Lightbulb, Calendar, Settings, AlertTriangle, AlertCircle } from "lucide-react"
+import { LogOut, RefreshCw, Send, Book, MessageCircle, FileText, Clock, User, PlusCircle, School, Lightbulb, Calendar, Settings, AlertTriangle, AlertCircle, CheckCircle, Loader2, MessageSquare, History } from "lucide-react"
 import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
+import { useSessionHistory, type SessionHistory } from "@/hooks/useSessionHistory"
 import ChatPanel from "@/components/ChatPanel"
-import { createSupabaseClient } from "@/lib/supabase"
 import { useToast } from "@/components/ui/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { motion } from "framer-motion"
@@ -19,6 +19,7 @@ import { LoadingErrorDisplay } from "@/components/LoadingTimeout"
 import { CustomLoader } from "@/components/ui/custom-loader"
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
 import type { Database } from "@/types/supabase"
+import { cn } from "@/lib/utils"
 
 // Animation variants for tab content
 const tabContentVariants = {
@@ -104,9 +105,21 @@ const EnhancedLoadingTimeout = ({
   return <>{children}</>;
 };
 
+// Fix createSupabaseClient function to properly type the client
+const createSupabaseClient = () => {
+  try {
+    const supabase = createClientComponentClient<Database>()
+    return supabase
+  } catch (error) {
+    console.error("Failed to create Supabase client:", error)
+    return null
+  }
+}
+
 export default function StudentDashboard() {
   const { user, signOut } = useAuth()
   const { profile, updateProfile } = useProfile()
+  const { history: sessionHistory, isLoading: historyLoading, error: historyError, refreshHistory } = useSessionHistory()
   const [name, setName] = useState('')
   const [activeRequests, setActiveRequests] = useState<string[]>([])
   const [selectedChat, setSelectedChat] = useState<string | null>(null)
@@ -131,6 +144,7 @@ export default function StudentDashboard() {
   const [loadingError, setLoadingError] = useState(false)
   const [connectionError, setConnectionError] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [isClosingRequest, setIsClosingRequest] = useState(false)
 
   // Handle tab change
   const handleTabChange = (value: string) => {
@@ -208,11 +222,12 @@ export default function StudentDashboard() {
       console.log("Supabase client initialized successfully, executing query");
       console.log("Query parameters:", { userId: user.id });
       
-      // Find requests created by this user
+      // Find active (non-closed) requests created by this user
       const { data, error } = await supabase
         .from('requests')
         .select('id')
         .eq('user_id', user.id)
+        .neq('status', 'closed') // Only get non-closed requests
         .order('created_at', { ascending: false })
       
       console.log("Query executed. Response:", { hasData: Boolean(data), hasError: Boolean(error) });
@@ -252,6 +267,9 @@ export default function StudentDashboard() {
       if (requests.length > 0 && !selectedChat) {
         console.log("Auto-selecting first request:", requests[0]);
         setSelectedChat(requests[0])
+      } else if (requests.length === 0) {
+        // If no active requests remain, clear the selected chat
+        setSelectedChat(null)
       }
     } catch (error) {
       console.error("Failed to fetch requests:", error)
@@ -543,6 +561,90 @@ export default function StudentDashboard() {
     };
   };
 
+  // Function to close/resolve a request
+  const handleCloseRequest = async (requestId: string) => {
+    if (!requestId || isClosingRequest) return
+    
+    try {
+      setIsClosingRequest(true)
+      
+      // Ensure we're authenticated before making the request
+      if (!user) {
+        toast({
+          title: "Authentication Required",
+          description: "Please make sure you're logged in to close this request.",
+          variant: "destructive"
+        })
+        router.push('/signin')
+        return
+      }
+      
+      const response = await fetch(`/api/requests/${requestId}/close`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        // Send the user ID explicitly
+        body: JSON.stringify({ userId: user.id }),
+        // Ensure cookies are sent with the request
+        credentials: 'include'
+      })
+      
+      const data = await response.json()
+      
+      if (!response.ok) {
+        console.error("Error closing request:", data)
+        
+        // Handle authentication errors
+        if (response.status === 401) {
+          toast({
+            title: "Authentication Error",
+            description: data.message || "Session error. Please try signing in again.",
+            variant: "destructive"
+          })
+          
+          // Only sign out if explicitly told to in the response
+          if (data.forceSignOut) {
+            setTimeout(() => {
+              signOut()
+            }, 2000)
+          }
+          
+          return
+        }
+        
+        throw new Error(data.error || 'Failed to close request')
+      }
+      
+      toast({
+        title: "Request Resolved",
+        description: "Your help request has been marked as resolved and moved to history.",
+        variant: "default"
+      })
+      
+      // Remove from active requests immediately
+      setActiveRequests(prev => prev.filter(id => id !== requestId))
+      
+      // If this was the selected chat, reset selection
+      if (selectedChat === requestId) {
+        setSelectedChat(null)
+      }
+      
+      // Refresh data to update UI
+      await fetchUserRequests()
+      await fetchUserStats()
+    } catch (error) {
+      console.error("Failed to close request:", error)
+      toast({
+        title: "Error",
+        description: "Failed to resolve your help request. Please try again.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsClosingRequest(false)
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-indigo-950">
       {/* Sidebar */}
@@ -619,6 +721,14 @@ export default function StudentDashboard() {
             </Button>
             <Button 
               variant="ghost" 
+              className={`w-full justify-start ${currentTab === 'history' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
+              onClick={() => handleTabChange('history')}
+            >
+              <History className="mr-2 h-4 w-4" />
+              <span>History</span>
+            </Button>
+            <Button 
+              variant="ghost" 
               className={`w-full justify-start ${currentTab === 'resources' ? 'bg-indigo-800 text-indigo-300 border-l-4 border-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.3)]' : 'text-white hover:text-white hover:bg-indigo-800'}`}
               onClick={() => handleTabChange('resources')}
             >
@@ -660,7 +770,7 @@ export default function StudentDashboard() {
         <div className="container mx-auto p-6 max-w-[1600px]">
           <Tabs defaultValue={currentTab} value={currentTab} onValueChange={handleTabChange} className="w-full space-y-6">
             <div className="flex justify-between items-center mb-4">
-              <h1 className="text-2xl font-bold text-white">Student Dashboard</h1>
+              <h1 className="text-2xl font-bold text-white">Student User</h1>
             </div>
 
             <TabsList className="bg-indigo-900 border-indigo-800 hidden">
@@ -669,6 +779,9 @@ export default function StudentDashboard() {
               </TabsTrigger>
               <TabsTrigger value="active" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
                 Active Chats
+              </TabsTrigger>
+              <TabsTrigger value="history" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
+                History
               </TabsTrigger>
               <TabsTrigger value="resources" className="data-[state=active]:bg-indigo-500 data-[state=active]:text-white">
                 Resources
@@ -904,23 +1017,27 @@ export default function StudentDashboard() {
                       ) : (
                         <div className="space-y-2">
                           {activeRequests.map((requestId) => (
-                            <div 
+                            <div
                               key={requestId}
-                              className={`p-3 rounded-md cursor-pointer hover:bg-indigo-800 transition-colors ${selectedChat === requestId ? 'bg-indigo-800 border-l-4 border-l-indigo-500' : 'bg-indigo-850'}`}
                               onClick={() => setSelectedChat(requestId)}
+                              className={cn(
+                                "flex items-center justify-between w-full p-3 mb-1 rounded-md transition-colors cursor-pointer",
+                                selectedChat === requestId
+                                  ? "bg-indigo-600 text-white"
+                                  : "bg-indigo-800 text-white hover:bg-indigo-700"
+                              )}
                             >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center">
-                                  <div className="w-2 h-2 rounded-full bg-green-500 mr-2"></div>
-                                  <p className="text-sm font-medium text-white truncate">Chat #{requestId.substring(0, 8)}</p>
-                                </div>
+                              <div className="flex items-center">
+                                <MessageSquare className="h-4 w-4 mr-2" />
+                                <span className="truncate">#{requestId.substring(0, 8)}</span>
+                              </div>
+                              <div className="flex items-center space-x-1">
                                 {newMessagesByRequest[requestId] > 0 && (
-                                  <span className="bg-indigo-500 text-white text-xs rounded-full px-2 py-1 font-semibold">
+                                  <Badge variant="destructive" className="ml-auto">
                                     {newMessagesByRequest[requestId]}
-                                  </span>
+                                  </Badge>
                                 )}
                               </div>
-                              <p className="text-xs text-indigo-300 mt-1">Active conversation</p>
                             </div>
                           ))}
                         </div>
@@ -947,9 +1064,32 @@ export default function StudentDashboard() {
                 
                 <div className="lg:col-span-2">
                   {selectedChat ? (
-                    <ChatPanel
-                      chatId={selectedChat}
-                    />
+                    <>
+                      <ChatPanel
+                        chatId={selectedChat}
+                      />
+                      <div className="flex items-center justify-end mt-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCloseRequest(selectedChat)}
+                          disabled={isClosingRequest}
+                          className="text-xs"
+                        >
+                          {isClosingRequest ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              Resolving...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Mark as Resolved
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </>
                   ) : (
                     <Card className="bg-indigo-900 border-indigo-800 h-full flex items-center justify-center">
                       <CardContent className="text-center p-8">
@@ -962,6 +1102,88 @@ export default function StudentDashboard() {
                     </Card>
                   )}
                 </div>
+              </motion.div>
+            </TabsContent>
+            
+            {/* History tab content */}
+            <TabsContent value="history" className="mt-0">
+              <motion.div
+                variants={tabContentVariants}
+                initial="hidden"
+                animate="visible"
+              >
+                <Card className="bg-indigo-900 border-indigo-800">
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="text-xl text-white">Session History</CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => refreshHistory()}
+                      disabled={historyLoading}
+                      className="border-indigo-700 hover:bg-indigo-800 text-white"
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-2 ${historyLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {historyLoading ? (
+                      <div className="flex justify-center p-6">
+                        <CustomLoader size="lg" color="indigo" label="Loading your session history..." />
+                      </div>
+                    ) : historyError ? (
+                      <LoadingErrorDisplay 
+                        title="Failed to Load History"
+                        description="There was a problem loading your session history."
+                        onRetry={() => refreshHistory()}
+                        theme="indigo"
+                      />
+                    ) : sessionHistory.length === 0 ? (
+                      <div className="text-center py-10">
+                        <History className="h-12 w-12 text-indigo-600 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-white">No Session History</h3>
+                        <p className="text-indigo-300 mt-2 max-w-md mx-auto">
+                          When you resolve help requests, they will appear here in your history.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {sessionHistory.map((session) => (
+                          <Card key={session.id} className="bg-indigo-800 border-indigo-700">
+                            <CardHeader className="p-4 pb-2">
+                              <div className="flex justify-between items-center">
+                                <CardTitle className="text-md text-white">
+                                  {session.issue}
+                                </CardTitle>
+                                <Badge 
+                                  className={
+                                    session.role === 'user' 
+                                      ? "bg-indigo-500 text-white" 
+                                      : "bg-green-500 text-white"
+                                  }
+                                >
+                                  {session.role === 'user' ? 'Your Request' : 'Helper'}
+                                </Badge>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="p-4 pt-2">
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <p className="text-indigo-300">Status</p>
+                                  <p className="text-white font-medium">{session.outcome}</p>
+                                </div>
+                                <div>
+                                  <p className="text-indigo-300">Duration</p>
+                                  <p className="text-white font-medium">{session.timeSpent}</p>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </motion.div>
             </TabsContent>
             

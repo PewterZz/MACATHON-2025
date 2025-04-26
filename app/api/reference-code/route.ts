@@ -10,6 +10,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/', req.url));
   }
 
+  console.log(`Attempting to lookup reference code: [${code}]`); // Log the exact code value
+
   try {
     // Look up the reference code in the database
     const { data: request, error } = await supabaseAdmin

@@ -69,6 +69,10 @@ interface Request {
   status: string;
   claimed_by: string | null;
   tags?: string[];
+  summary: string;
+  risk: number;
+  channel: string;
+  timestamp: string;
 }
 
 interface RequestWithTags {
@@ -83,8 +87,8 @@ interface RequestWithTags {
 
 // Update the RequestCard props interface
 interface RequestCardProps {
-  request: Partial<RequestWithTags>;
-  onClaim: () => Promise<void>;
+  request: Request;
+  onClaim: (requestId: string) => Promise<void>;
   className?: string;
 }
 
@@ -120,24 +124,78 @@ const TabItem = ({ label, value, icon: Icon }: TabItemProps) => {
 };
 
 export const RequestCard = ({ request, onClaim, className }: RequestCardProps) => {
+  // Determine risk color classes for the badge (text, border, background)
+  const getRiskBadgeColorClasses = (risk: number) => {
+    if (risk >= 0.8) return 'text-red-600 border-red-500/60 bg-red-500/10';
+    if (risk >= 0.5) return 'text-yellow-600 border-yellow-500/60 bg-yellow-500/10';
+    if (risk >= 0.2) return 'text-blue-600 border-blue-500/60 bg-blue-500/10'; // Medium risk
+    return 'text-green-600 border-green-500/60 bg-green-500/10'; // Low risk
+  };
+
+  // Determine background color class for the risk indicator circle
+  const getRiskCircleBgClass = (risk: number) => {
+    if (risk >= 0.8) return 'bg-red-500';
+    if (risk >= 0.5) return 'bg-yellow-500';
+    if (risk >= 0.2) return 'bg-blue-500';
+    return 'bg-green-500';
+  };
+
+  // Determine risk label
+  const getRiskLabel = (risk: number) => {
+    if (risk >= 0.8) return 'Critical';
+    if (risk >= 0.5) return 'High';
+    if (risk >= 0.2) return 'Medium';
+    return 'Low';
+  };
+
   return (
-    <div className={cn("rounded-lg border p-4", className)}>
-      <h3 className="font-semibold">{request.title}</h3>
-      <p className="text-sm text-gray-600">{request.description}</p>
-      <div className="mt-2 flex gap-2">
-        {request.tags?.map((tag) => (
-          <span key={tag} className="rounded-full bg-gray-100 px-2 py-1 text-xs">
-            {tag}
-          </span>
-        ))}
-      </div>
-      <button 
-        onClick={onClaim}
-        className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-      >
-        Claim Request
-      </button>
-    </div>
+    <motion.div 
+      className={cn(
+        "rounded-lg border bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col justify-between", 
+        className
+      )}
+      variants={cardVariants} // Apply animation variant
+    >
+      <CardHeader className="pb-2">
+        <div className="flex justify-between items-start mb-1">
+          <CardTitle className="text-lg font-semibold leading-none tracking-tight pt-1">Request {request.id.substring(0, 6)}</CardTitle>
+          <div className="flex items-center gap-2">
+            {/* Risk Label Badge with colored circle and thicker border */}
+            <Badge variant="outline" className={`border-2 capitalize font-medium text-xs px-2 py-1 flex items-center ${getRiskBadgeColorClasses(request.risk)}`}>
+              <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${getRiskCircleBgClass(request.risk)}`}></span>
+              {getRiskLabel(request.risk)}
+            </Badge>
+            {/* Risk Percentage Badge */}
+            <Badge variant="secondary" className="font-medium text-xs px-2 py-1 text-slate-100 bg-slate-600 hover:bg-slate-500">
+              {(request.risk * 100).toFixed(0)}% Risk
+            </Badge>
+          </div>
+        </div>
+        <CardDescription className="text-xs text-muted-foreground flex items-center gap-2 pt-1">
+          <Clock size={12} /> {request.timestamp}
+          <span className="capitalize">| <MessageCircle size={12} className="inline-block mr-1"/>{request.channel}</span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="py-3 flex-grow">
+        <p className="text-sm text-slate-200 mb-3 line-clamp-3" title={request.summary}>
+          {request.summary}
+        </p>
+        <div className="flex flex-wrap gap-1">
+          {request.tags?.map((tag) => (
+            <Badge key={tag} variant="outline" className="text-xs capitalize">{tag}</Badge>
+          ))}
+        </div>
+      </CardContent>
+      <CardFooter className="pt-3">
+        <Button 
+          onClick={() => onClaim(request.id)} // Pass request ID to onClaim
+          className="w-full"
+          size="sm"
+        >
+          <UserPlus className="mr-2 h-4 w-4" /> Claim Request
+        </Button>
+      </CardFooter>
+    </motion.div>
   );
 };
 
@@ -431,6 +489,67 @@ export default function HelperDashboard() {
     },
   ]
 
+  // Handler for sending native notifications
+  const handleSendNotification = async () => {
+    if (!('Notification' in window)) {
+      toast({
+        title: "Notifications Not Supported",
+        description: "This browser does not support desktop notifications.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    let permission = Notification.permission;
+
+    if (permission === 'default') {
+      permission = await Notification.requestPermission();
+    }
+
+    if (permission === 'granted') {
+      // Send the notification
+      try {
+        // You can customize the title, body, icon, etc.
+        const notification = new Notification("✨ Meld Notification", {
+          body: "This is a test notification!",
+          icon: "/logo.png", // Optional: Use your app's logo
+          // requireInteraction: true, // Optional: Keeps the notification visible until interacted with
+        });
+        
+        // Optional: Handle click on notification
+        notification.onclick = () => {
+          console.log('Notification clicked!');
+          // Example: Focus the window or navigate somewhere
+          window.focus(); 
+          // router.push('/dashboard?tab=queue'); // Example navigation
+        };
+        
+        console.log("Notification sent successfully.");
+
+      } catch (error) {
+        console.error("Error sending notification:", error);
+        toast({
+          title: "Notification Error",
+          description: "Could not send the notification.",
+          variant: "destructive",
+        });
+      }
+    } else if (permission === 'denied') {
+      toast({
+        title: "Notifications Blocked",
+        description: "Please enable notifications for this site in your browser settings.",
+        variant: "destructive",
+      });
+    } else {
+       console.log('Notification permission request dismissed or failed.');
+        toast({
+          title: "Permission Required",
+          description: "Notification permission was not granted.",
+          variant: "destructive",
+        });
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-900">
       {/* Sidebar */}
@@ -553,7 +672,7 @@ export default function HelperDashboard() {
             className="w-full space-y-6"
           >
             <div className="flex justify-between items-center mb-4">
-              <h1 className="text-2xl font-bold text-slate-100">Helper Dashboard</h1>
+              <h1 className="text-2xl font-bold text-slate-100">Helper</h1>
               <div className="flex items-center gap-4">
                 <div className="flex items-center">
                   <Switch
@@ -566,7 +685,12 @@ export default function HelperDashboard() {
                     Auto-assign requests
                   </label>
                 </div>
-                <Button variant="outline" size="sm" className="border-slate-700 hover:bg-slate-700 flex items-center gap-1">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="border-slate-700 hover:bg-slate-700 flex items-center gap-1"
+                  onClick={handleSendNotification}
+                >
                   <BellRing className="h-4 w-4" />
                   <span>Notifications</span>
                 </Button>
@@ -662,7 +786,6 @@ export default function HelperDashboard() {
                         title="Failed to Load Queue"
                         description="There was a problem loading the request queue."
                         onRetry={refreshQueue}
-                        icon={AlertTriangle}
                         theme="slate"
                       />
                     ) : queue.length === 0 ? (
@@ -682,7 +805,7 @@ export default function HelperDashboard() {
                           <motion.div key={request.id} variants={cardVariants}>
                             <RequestCard
                               request={request}
-                              onClaim={() => handleClaimRequest(request.id)}
+                              onClaim={handleClaimRequest}
                               className="bg-slate-700 border-slate-600 hover:border-[#3ECF8E]/50"
                             />
                           </motion.div>
@@ -736,7 +859,6 @@ export default function HelperDashboard() {
                           title="Failed to Load Chats"
                           description="There was a problem loading your active chats."
                           onRetry={refreshClaimedRequests}
-                          icon={AlertTriangle}
                           theme="slate"
                         />
                       ) : claimedRequests.length === 0 ? (
@@ -877,7 +999,6 @@ export default function HelperDashboard() {
                         title="Failed to Load History"
                         description="There was a problem loading your session history."
                         onRetry={handleRefreshHistory}
-                        icon={AlertTriangle}
                         theme="slate"
                       />
                     ) : history.length > 0 ? (

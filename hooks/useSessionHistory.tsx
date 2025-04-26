@@ -12,6 +12,7 @@ export interface SessionHistory {
   issue: string;
   outcome: string;
   timeSpent: string;
+  role: 'helper' | 'user';
 }
 
 export function useSessionHistory() {
@@ -33,24 +34,41 @@ export function useSessionHistory() {
       setIsLoading(true)
       
       // Get all requests claimed by this user that are now closed
-      const { data: requests, error: requestsError } = await supabase
+      const { data: claimedRequests, error: claimedRequestsError } = await supabase
         .from('requests')
         .select('*, messages(id, ts, sender)')
         .eq('claimed_by', user.id)
         .eq('status', 'closed')
         .order('created_at', { ascending: false })
 
-      if (requestsError) {
-        throw requestsError
+      if (claimedRequestsError) {
+        throw claimedRequestsError
       }
       
-      if (!requests) {
+      // Get all requests created by this user that are now closed
+      const { data: userRequests, error: userRequestsError } = await supabase
+        .from('requests')
+        .select('*, messages(id, ts, sender)')
+        .eq('user_id', user.id)
+        .eq('status', 'closed')
+        .order('created_at', { ascending: false })
+        
+      if (userRequestsError) {
+        throw userRequestsError
+      }
+      
+      const allRequests = [
+        ...(claimedRequests || []).map(req => ({ ...req, role: 'helper' as const })),
+        ...(userRequests || []).map(req => ({ ...req, role: 'user' as const }))
+      ]
+
+      if (allRequests.length === 0) {
         setHistory([])
         return
       }
 
       // Transform the data for display
-      const sessionsHistory = requests.map((request) => {
+      const sessionsHistory = allRequests.map((request) => {
         // Calculate time spent (difference between first and last message timestamp)
         let timeSpent = 'Unknown'
         
@@ -68,15 +86,22 @@ export function useSessionHistory() {
             : `${Math.floor(diffMinutes / 60)} hr ${diffMinutes % 60} min`;
         }
         
-        // Define outcome (could be enhanced with more logic based on your app's requirements)
-        const outcome = request.status === 'closed' ? 'Completed' : 'In progress';
+        // Define outcome
+        const outcome = 'Resolved';
         
         return {
           id: request.id,
           issue: request.summary,
           outcome,
           timeSpent,
+          role: request.role
         };
+      });
+
+      // Sort by most recent first
+      sessionsHistory.sort((a, b) => {
+        // This assumes the ID has some timestamp component or is sequential
+        return b.id.localeCompare(a.id);
       });
 
       setHistory(sessionsHistory);
@@ -94,12 +119,13 @@ export function useSessionHistory() {
     fetchHistory();
   }, [fetchHistory]);
 
-  // Subscribe to closed requests
+  // Subscribe to closed requests - both claimed and created
   useEffect(() => {
     if (!user?.id) return
 
-    const channel = supabase
-      .channel('history-updates')
+    // Listen for changes in requests claimed by the user
+    const helperChannel = supabase
+      .channel('helper-history-updates')
       .on(
         'postgres_changes',
         {
@@ -109,14 +135,31 @@ export function useSessionHistory() {
           filter: `claimed_by=eq.${user.id}`
         },
         () => {
-          // Refresh history when there are changes to requests
+          fetchHistory()
+        }
+      )
+      .subscribe()
+
+    // Listen for changes in requests created by the user
+    const userChannel = supabase
+      .channel('user-history-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'requests',
+          filter: `user_id=eq.${user.id}`
+        },
+        () => {
           fetchHistory()
         }
       )
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      supabase.removeChannel(helperChannel)
+      supabase.removeChannel(userChannel)
     }
   }, [user?.id, supabase, fetchHistory])
 

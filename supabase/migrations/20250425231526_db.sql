@@ -1,0 +1,2 @@
+ALTER TABLE public.messages
+ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT now();

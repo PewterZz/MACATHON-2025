@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Heart, LayoutDashboard, History, Settings, Menu, X, MessageSquare, LogOut, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -10,13 +10,29 @@ import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
 import { toast } from "@/components/ui/use-toast"
 
+// Update the ProfileContextType interface to match the context implementation
+interface ProfileContextType {
+  profile: any;
+  isLoading: boolean;
+  updateProfile: (data: any) => Promise<void>;
+}
+
+// Update the declaration to use the local interface
+declare module '@/context/profile-context' {
+  export function useProfile(): ProfileContextType;
+}
+
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
   const { user, signOut } = useAuth()
   const { profile, isLoading: profileLoading } = useProfile()
   const [isFixingProfile, setIsFixingProfile] = useState(false)
+
+  // Get current tab from search params
+  const currentTab = searchParams?.get('tab')
 
   const toggleSidebar = () => {
     setIsOpen(!isOpen)
@@ -67,21 +83,25 @@ export default function Navbar() {
     {
       name: "Dashboard",
       href: "/dashboard",
+      tab: null, // Main dashboard doesn't use a tab parameter
       icon: LayoutDashboard,
     },
     {
       name: "Active Chats",
       href: "/dashboard?tab=active",
+      tab: "active",
       icon: MessageSquare,
     },
     {
       name: "History",
       href: "/dashboard?tab=history",
+      tab: "history",
       icon: History,
     },
     {
       name: "Settings",
       href: "/dashboard?tab=settings",
+      tab: "settings",
       icon: Settings,
     },
   ]
@@ -153,21 +173,30 @@ export default function Navbar() {
           </div>
 
           <nav className="flex-1 p-4 space-y-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                  pathname === item.href || (pathname === "/dashboard" && item.href === "/dashboard")
-                    ? "bg-[#3ECF8E]/10 text-[#3ECF8E]"
-                    : "text-slate-300 hover:bg-slate-700 hover:text-slate-100",
-                )}
-              >
-                <item.icon className="h-5 w-5" />
-                {item.name}
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              // Determine if this nav item is active
+              const isActive = 
+                // For the main dashboard (no tab)
+                (item.tab === null && pathname === "/dashboard" && !currentTab) ||
+                // For other tabs, check if the current tab matches this item's tab
+                (item.tab !== null && currentTab === item.tab);
+                
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-[#3ECF8E]/10 text-[#3ECF8E]"
+                      : "text-slate-300 hover:bg-slate-700 hover:text-slate-100",
+                  )}
+                >
+                  <item.icon className="h-5 w-5" />
+                  {item.name}
+                </Link>
+              );
+            })}
             
             <button
               onClick={handleSignOut}

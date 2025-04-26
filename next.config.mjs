@@ -9,7 +9,6 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  optimizeFonts: true,
   experimental: {
   },
   webpack: (config) => {

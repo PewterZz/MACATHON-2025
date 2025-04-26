@@ -21,7 +21,7 @@ const ProfileContext = createContext<ProfileContextType | undefined>(undefined)
 export function ProfileProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const supabase = createSupabaseClient()
   const isFetchingRef = useRef(false)
@@ -50,6 +50,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     lastFetchTimeRef.current = now
     isFetchingRef.current = true
     
+    // Set loading to true ONLY when fetch actually starts for a valid user
+    setIsLoading(true)
+    
     // Log the fetch attempt
     console.log('Starting profile fetch with Supabase for user:', user.id)
 
@@ -64,8 +67,6 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }, 10000)
 
     try {
-      setIsLoading(true)
-      
       // First try to get any local cached profile
       let cachedProfile = null
       try {
