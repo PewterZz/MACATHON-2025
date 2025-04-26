@@ -10,6 +10,7 @@ const nextConfig = {
     unoptimized: true,
   },
   experimental: {
+    serverComponentsExternalPackages: ['ws', 'deno-websocket'],
   },
   webpack: (config) => {
     config.resolve.fallback = {

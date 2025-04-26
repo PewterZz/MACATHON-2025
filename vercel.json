@@ -29,5 +29,8 @@
   "github": {
     "enabled": true,
     "silent": false
-  }
+  },
+  "rewrites": [
+    { "source": "/api/voice/stream", "destination": "/api/voice/stream" }
+  ]
 } 
