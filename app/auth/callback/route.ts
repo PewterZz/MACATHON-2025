@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
   const origin = requestUrl.origin;
+  const type = requestUrl.searchParams.get('type');
   
   if (!code) {
     // If no code is present, redirect to signin
@@ -22,6 +23,11 @@ export async function GET(request: NextRequest) {
     if (error) {
       console.error('Error exchanging code for session:', error);
       return NextResponse.redirect(new URL('/signin?error=auth', origin));
+    }
+    
+    // Check if this is a password reset
+    if (type === 'password_reset') {
+      return NextResponse.redirect(new URL('/update-password', origin));
     }
     
     // If we have a user, ensure they have a profile
@@ -81,6 +87,13 @@ export async function GET(request: NextRequest) {
         console.error('Unexpected error in profile creation:', profileErr);
       }
 
+      // Check if this is email verification (new email confirmed or just verified)
+      if (type === 'signup' || type === 'email_change' || 
+          (data.user.email_confirmed_at && !data.user.last_sign_in_at)) {
+        // Redirect to email verification success page
+        return NextResponse.redirect(new URL('/email-verified', origin));
+      }
+      
       // Check if this is a new user (no email verified)
       if (!data.user.email_confirmed_at) {
         // If email isn't verified yet, redirect to email-sent page

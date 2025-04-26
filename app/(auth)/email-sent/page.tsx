@@ -149,6 +149,9 @@ export default function EmailSent() {
           Please check your inbox and click on the verification link to complete your registration. If you don't see the
           email, check your spam folder.
         </p>
+        <p className="mt-3 mb-4 p-3 bg-slate-700/40 rounded-md text-sm">
+          Once you verify your email, you'll be automatically logged in and redirected to your dashboard.
+        </p>
         <div className="mt-4">
           <Input
             id="email"

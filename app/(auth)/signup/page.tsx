@@ -57,7 +57,7 @@ export default function SignUp() {
             name,
             role: isHelper ? "helper" : "user"
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?type=signup`,
         }
       })
       
@@ -148,6 +148,9 @@ export default function SignUp() {
         <CardDescription className="text-slate-300">Join <span className="font-medium tracking-tight">Meld</span> to help or get help</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 p-3 bg-slate-700/40 rounded-md text-sm text-slate-300">
+          <p>After creating your account, you'll need to verify your email address. Once verified, you'll be automatically logged in.</p>
+        </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <label htmlFor="name" className="text-sm font-medium text-slate-200">
