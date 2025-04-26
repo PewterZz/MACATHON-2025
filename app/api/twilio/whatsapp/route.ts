@@ -15,6 +15,30 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Track user state for code requests
+interface UserState {
+  [phoneNumber: string]: {
+    hasRequestedCode: boolean;
+    lastInteractionTime: number;
+  }
+}
+
+// In-memory store for user states (consider moving to database for production)
+const userStates: UserState = {};
+
+// Check if user message contains a request for a code or link
+const isRequestingCode = (message: string): boolean => {
+  const requestPatterns = [
+    /\b(get|send|give|share).*(code|link|website|platform|app|access)\b/i,
+    /\b(code|link|website|platform|app|access).*(please|now|get|send)\b/i,
+    /\byes\b/i,
+    /\bsure\b/i,
+    /\bi (want|need|would like) (the|a) (code|link)\b/i
+  ];
+  
+  return requestPatterns.some(pattern => pattern.test(message));
+};
+
 // Store conversation in Weaviate - make completely non-blocking
 const storeInWeaviate = async (phoneNumber: string, userMessage: string, aiResponse: string, requestId: number) => {
   // Run in a separate try/catch to ensure it never affects the main flow
@@ -81,22 +105,42 @@ const getConversationHistory = async (requestId: number): Promise<{ sender: stri
 };
 
 // Get AI response to user input - Use sender info from history
-const getAIResponse = async (userMessage: string, conversationHistory: { sender: string, content: string }[] = [], isNewConversation: boolean = false, referenceCode?: string): Promise<string> => {
+const getAIResponse = async (userMessage: string, conversationHistory: { sender: string, content: string }[] = [], isNewConversation: boolean = false, referenceCode?: string, phoneNumber?: string): Promise<string> => {
   try {
     console.log('Getting AI response with OpenAI');
+    
+    // Check if this is a code request
+    let hasExplicitlyRequestedCode = false;
+    if (phoneNumber && isRequestingCode(userMessage)) {
+      // User has explicitly asked for the code
+      hasExplicitlyRequestedCode = true;
+      
+      // Update user state
+      userStates[phoneNumber] = {
+        hasRequestedCode: true,
+        lastInteractionTime: Date.now()
+      };
+      
+      console.log(`User ${phoneNumber} has explicitly requested the code/link`);
+    }
+    
+    // Check existing user state
+    const userHasRequestedCodeBefore = phoneNumber && userStates[phoneNumber]?.hasRequestedCode;
     
     const systemMessage = isNewConversation 
       ? `You are a compassionate mental health first responder via WhatsApp. 
       Your role is to provide immediate support, validation, and guidance to someone in distress.
       Ask follow-up questions to understand their situation better. Be empathetic but professional.
-      Let them know they can access our full support platform at ${APP_URL} using reference code ${referenceCode || "[CODE]"}.
+      DO NOT automatically share the reference code and platform link until the user explicitly asks for it.
+      If they seem to need additional support, you can ask if they would like access to our full platform.
       Focus on asking questions to understand their situation first before suggesting next steps.
       Never identify yourself as AI.`
       : `You are a compassionate mental health first responder via WhatsApp. 
       Your role is to provide immediate support, validation, and guidance to someone in distress.
       Carefully review the previous messages provided in the conversation history to understand the context.
       Continue the conversation naturally, referring to previous messages (like the user's name if mentioned) appropriately.
-      If they seem to need additional support, remind them they can access our platform at ${APP_URL}.
+      DO NOT share the reference code and platform link unless the user explicitly asks for it.
+      If they seem to need additional support, you can ask if they would like access to our full platform.
       Be warm, empathetic and conversational. Never identify yourself as AI.`; // Strengthened prompt
     
     const messages: { role: "system" | "user" | "assistant", content: string }[] = [
@@ -127,9 +171,12 @@ const getAIResponse = async (userMessage: string, conversationHistory: { sender:
     
     let aiResponse = response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
     
-    // If this is a new conversation and we have a reference code, make sure it's included
-    if (isNewConversation && referenceCode && !aiResponse.includes(referenceCode)) {
-      aiResponse += `\n\nYou can access our full support platform at ${APP_URL} using reference code: ${referenceCode}`;
+    // Only add the reference code when explicitly requested or previously requested
+    if (referenceCode && (hasExplicitlyRequestedCode || userHasRequestedCodeBefore)) {
+      // Only append if not already included
+      if (!aiResponse.includes(referenceCode)) {
+        aiResponse += `\n\nYou can access our full support platform at ${APP_URL} using reference code: ${referenceCode}`;
+      }
     }
     
     console.log('OpenAI response received successfully');
@@ -184,8 +231,8 @@ export async function POST(req: NextRequest) {
         // Get conversation history
         const history = await getConversationHistory(existingRequest.id);
         
-        // Get AI response with conversation context
-        aiResponse = await getAIResponse(body, history, false, existingRequest.reference_code);
+        // Get AI response with conversation context - now passing phone number
+        aiResponse = await getAIResponse(body, history, false, existingRequest.reference_code, phoneNumber);
         
         console.log('Adding user message to Supabase');
         // Add the user message to an existing request
@@ -275,8 +322,8 @@ export async function POST(req: NextRequest) {
         
         console.log(`Created new request with ID: ${newRequest.id}`);
         
-        // Get AI response for the initial message (with reference code)
-        aiResponse = await getAIResponse(body, [], true, referenceCode);
+        // Get AI response for the initial message (with reference code) - now passing phone number
+        aiResponse = await getAIResponse(body, [], true, referenceCode, phoneNumber);
         
         console.log('Adding initial user message to Supabase');
         // Add the initial message
