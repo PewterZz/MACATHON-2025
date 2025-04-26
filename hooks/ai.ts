@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true,
 });
 
 type TriageResult = {
@@ -109,7 +110,9 @@ export const coach = async (
 ): Promise<string> => {
   try {
     const messagesForAI = context.messages.map(msg => ({
-      role: msg.sender === 'caller' ? 'user' : msg.sender === 'helper' ? 'assistant' : 'system',
+      role: msg.sender === 'caller' ? 'user' as const : 
+            msg.sender === 'helper' ? 'assistant' as const : 
+            'system' as const,
       content: msg.content,
     }));
 
@@ -146,7 +149,9 @@ export const streamCoach = async function* (
 ) {
   try {
     const messagesForAI = context.messages.map(msg => ({
-      role: msg.sender === 'caller' ? 'user' : msg.sender === 'helper' ? 'assistant' : 'system',
+      role: msg.sender === 'caller' ? 'user' as const : 
+            msg.sender === 'helper' ? 'assistant' as const : 
+            'system' as const,
       content: msg.content,
     }));
 
