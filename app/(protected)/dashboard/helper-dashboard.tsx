@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
 import { useSessionHistory } from "@/hooks/useSessionHistory"
-import { LogOut, AlertTriangle, RefreshCw, UserPlus, CheckCircle, Clock, FileText, PieChart, MessageCircle, Coffee, ArrowUpRight, BellRing, Settings } from "lucide-react"
+import { LogOut, AlertTriangle, RefreshCw, UserPlus, CheckCircle, Clock, FileText, PieChart, MessageCircle, Coffee, ArrowUpRight, BellRing, Settings, Filter, SortAsc, SortDesc } from "lucide-react"
 import { createSupabaseClient } from "@/lib/supabase"
 import { useToast } from "@/components/ui/use-toast"
 import { Badge } from "@/components/ui/badge"
@@ -26,6 +26,14 @@ import type { LucideIcon, LucideProps } from 'lucide-react'
 import { ForwardRefExoticComponent, RefAttributes } from 'react'
 import { cn } from "@/lib/utils"
 import ChatPanel from "@/components/ChatPanel"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 // Animation variants for tab content
 const tabContentVariants = {
@@ -221,6 +229,12 @@ export default function HelperDashboard() {
   const [queueLoadingError, setQueueLoadingError] = useState(false)
   const [claimedLoadingError, setClaimedLoadingError] = useState(false)
   const [historyLoadingError, setHistoryLoadingError] = useState(false)
+  
+  // Add state for sorting
+  const [queueSortOrder, setQueueSortOrder] = useState<string>("risk-high") // Default: sort by highest risk first
+  const [sortedQueue, setSortedQueue] = useState<Request[]>([])
+  // Create a ref to track the current sortedQueue without triggering re-renders
+  const sortedQueueRef = useRef<Request[]>([])
   
   // Get current tab from URL or default to 'queue'
   const currentTab = searchParams?.get('tab') || 'queue'
@@ -550,6 +564,80 @@ export default function HelperDashboard() {
     }
   };
 
+  // Sort queue when sort order or queue changes
+  useEffect(() => {
+    // Skip if queue is empty
+    if (!queue.length) {
+      if (sortedQueue.length !== 0) {
+        setSortedQueue([]);
+      }
+      return;
+    }
+
+    // Use memoization to avoid unnecessary re-renders
+    const memoizedSort = () => {
+      let sorted = [...queue];
+      
+      switch (queueSortOrder) {
+        case "risk-high":
+          sorted = sorted.sort((a, b) => b.risk - a.risk);
+          break;
+        case "risk-low":
+          sorted = sorted.sort((a, b) => a.risk - b.risk);
+          break;
+        case "time-old":
+          // Parse timestamps and sort by oldest first
+          sorted = sorted.sort((a, b) => {
+            const aTime = a.timestamp.includes('min') 
+              ? parseInt(a.timestamp) 
+              : parseInt(a.timestamp) * 60;
+            const bTime = b.timestamp.includes('min') 
+              ? parseInt(b.timestamp) 
+              : parseInt(b.timestamp) * 60;
+            return bTime - aTime; // More minutes = older
+          });
+          break;
+        case "time-new":
+          // Parse timestamps and sort by newest first
+          sorted = sorted.sort((a, b) => {
+            const aTime = a.timestamp.includes('min') 
+              ? parseInt(a.timestamp) 
+              : parseInt(a.timestamp) * 60;
+            const bTime = b.timestamp.includes('min') 
+              ? parseInt(b.timestamp) 
+              : parseInt(b.timestamp) * 60;
+            return aTime - bTime; // Fewer minutes = newer
+          });
+          break;
+        case "channel":
+          // Sort alphabetically by channel
+          sorted = sorted.sort((a, b) => a.channel.localeCompare(b.channel));
+          break;
+        default:
+          break;
+      }
+      
+      return sorted;
+    };
+    
+    // Only update if there would be a change
+    const newSorted = memoizedSort();
+    
+    // Check if array contents are different by comparing stringified versions
+    const areArraysEqual = () => {
+      if (newSorted.length !== sortedQueue.length) return false;
+      
+      const sortedIds = newSorted.map(item => item.id).join(',');
+      const currentIds = sortedQueue.map(item => item.id).join(',');
+      
+      return sortedIds === currentIds;
+    };
+    
+    if (!areArraysEqual()) {
+      setSortedQueue(newSorted);
+    }
+  }, [queue, queueSortOrder, sortedQueue.length]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-900">
       {/* Sidebar */}
@@ -678,7 +766,12 @@ export default function HelperDashboard() {
                   <Switch
                     id="auto-assign"
                     checked={autoAssign}
-                    onCheckedChange={setAutoAssign}
+                    onCheckedChange={(checked) => {
+                      // Prevent infinite loops by only updating when value changes
+                      if (checked !== autoAssign) {
+                        setAutoAssign(checked);
+                      }
+                    }}
                     className="data-[state=checked]:bg-[#3ECF8E]"
                   />
                   <label htmlFor="auto-assign" className="ml-2 text-sm text-slate-300">
@@ -763,10 +856,64 @@ export default function HelperDashboard() {
                 <Card className="bg-slate-800 border-slate-700">
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
                     <CardTitle className="text-lg font-semibold text-slate-100">Support Queue</CardTitle>
-                    <Button variant="outline" size="sm" onClick={refreshQueue} disabled={isLoading} className="border-slate-700 hover:bg-slate-700">
-                      <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                      Refresh
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="border-slate-700 hover:bg-slate-700">
+                            <Filter className="h-4 w-4 mr-2" />
+                            Sort Requests
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="bg-slate-800 border-slate-700">
+                          <DropdownMenuLabel className="text-slate-300">Sort by Risk</DropdownMenuLabel>
+                          <DropdownMenuItem 
+                            className={queueSortOrder === "risk-high" ? "bg-slate-700 text-[#3ECF8E]" : "text-slate-300"}
+                            onClick={() => setQueueSortOrder("risk-high")}
+                          >
+                            <SortDesc className="h-4 w-4 mr-2" />
+                            Highest Risk First
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            className={queueSortOrder === "risk-low" ? "bg-slate-700 text-[#3ECF8E]" : "text-slate-300"}
+                            onClick={() => setQueueSortOrder("risk-low")}
+                          >
+                            <SortAsc className="h-4 w-4 mr-2" />
+                            Lowest Risk First
+                          </DropdownMenuItem>
+                          
+                          <DropdownMenuSeparator className="bg-slate-700" />
+                          <DropdownMenuLabel className="text-slate-300">Sort by Time</DropdownMenuLabel>
+                          <DropdownMenuItem 
+                            className={queueSortOrder === "time-old" ? "bg-slate-700 text-[#3ECF8E]" : "text-slate-300"}
+                            onClick={() => setQueueSortOrder("time-old")}
+                          >
+                            <Clock className="h-4 w-4 mr-2" />
+                            Oldest First
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            className={queueSortOrder === "time-new" ? "bg-slate-700 text-[#3ECF8E]" : "text-slate-300"}
+                            onClick={() => setQueueSortOrder("time-new")}
+                          >
+                            <Clock className="h-4 w-4 mr-2" />
+                            Newest First
+                          </DropdownMenuItem>
+                          
+                          <DropdownMenuSeparator className="bg-slate-700" />
+                          <DropdownMenuItem 
+                            className={queueSortOrder === "channel" ? "bg-slate-700 text-[#3ECF8E]" : "text-slate-300"}
+                            onClick={() => setQueueSortOrder("channel")}
+                          >
+                            <MessageCircle className="h-4 w-4 mr-2" />
+                            Sort by Channel
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      
+                      <Button variant="outline" size="sm" onClick={refreshQueue} disabled={isLoading} className="border-slate-700 hover:bg-slate-700">
+                        <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     <LoadingTimeout 
@@ -801,7 +948,7 @@ export default function HelperDashboard() {
                         initial="hidden"
                         animate="visible"
                       >
-                        {queue.map((request) => (
+                        {sortedQueue.map((request) => (
                           <motion.div key={request.id} variants={cardVariants}>
                             <RequestCard
                               request={request}
@@ -1084,7 +1231,12 @@ export default function HelperDashboard() {
                           <Switch
                             id="auto-assign-settings"
                             checked={autoAssign}
-                            onCheckedChange={setAutoAssign}
+                            onCheckedChange={(checked) => {
+                              // Prevent infinite loops by only updating when value changes
+                              if (checked !== autoAssign) {
+                                setAutoAssign(checked);
+                              }
+                            }}
                             className="data-[state=checked]:bg-[#3ECF8E]"
                           />
                         </div>
