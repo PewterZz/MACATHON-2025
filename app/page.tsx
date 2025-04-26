@@ -326,8 +326,8 @@ function HomeContent() {
                   </svg>
                   <div>
                     <p className="text-white font-medium">Discord</p>
-                    <a href="https://discord.gg/meld-community" className="text-indigo-400 hover:underline">Join our server</a> or 
-                    <a href="https://discord.com/oauth2/authorize?client_id=123456789&scope=bot&permissions=8" className="text-indigo-400 hover:underline ml-1">add Meldy to yours</a>
+                    <a href="https://discord.gg/5FZqTHnRhq" className="text-indigo-400 hover:underline">Join our server</a> or 
+                    <a href="https://discord.com/oauth2/authorize?client_id=1364959908067410011&integration_type=0&scope=applications.commands" className="text-indigo-400 hover:underline ml-1">add Meldy to yours</a>
                   </div>
                 </div>
               </div>
