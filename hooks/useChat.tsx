@@ -5,6 +5,7 @@ import { createSupabaseClient } from "@/lib/supabase"
 import type { Database } from "@/types/supabase"
 import { useAuth } from "@/context/auth-context"
 import { useProfile } from "@/context/profile-context"
+import { triage } from "@/hooks/ai" // Import the triage function
 
 type Message = {
   id: number | string;
@@ -294,6 +295,46 @@ export function useChat(requestId?: string) {
 
     if (!data) {
       throw new Error("No data returned from message insert")
+    }
+
+    // If this is the first message from the caller and we're in web chat,
+    // trigger AI triage analysis
+    if (sender === "caller") {
+      try {
+        // Check if this is the first message from the caller
+        const { data: messageCount, error: countError } = await createSupabaseClient()
+          .from('messages')
+          .select('id', { count: 'exact' })
+          .eq('request_id', currentRequestId)
+          .eq('sender', 'caller')
+        
+        // If this is the first or second message, run the analysis
+        // (second message included for robustness)
+        if (!countError && messageCount && messageCount.length <= 2) {
+          console.log('First user message, performing triage analysis')
+          // Perform AI triage
+          const result = await triage(content)
+          console.log('Web chat triage result:', result)
+          
+          // Update the request with the analysis results
+          const { error: updateError } = await createSupabaseClient()
+            .from('requests')
+            .update({
+              summary: result.summary,
+              risk: result.risk,
+              // Mark high-risk cases as urgent
+              status: result.risk >= 0.6 ? 'urgent' : 'open'
+            })
+            .eq('id', currentRequestId)
+          
+          if (updateError) {
+            console.error('Failed to update request with triage results:', updateError)
+          }
+        }
+      } catch (analysisError) {
+        console.error('Error performing triage analysis:', analysisError)
+        // Continue despite analysis error - we don't want to block the message
+      }
     }
 
     return data.id

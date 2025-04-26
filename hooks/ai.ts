@@ -40,7 +40,7 @@ const triageFunction: TriageFunction = {
       },
       risk: {
         type: 'number',
-        description: 'Risk assessment on a scale of 0 to 1, where 0 is no risk and 1 is severe risk. Values >= 0.7 indicate urgent need for help.',
+        description: 'Risk assessment on a scale of 0 to 1, where 0 is no risk and 1 is severe risk. Values >= 0.6 indicate urgent need for help. Be more sensitive to life-threatening situations - anything potentially life-threatening should be rated at least 0.7 (high) or 0.9+ (critical).',
       },
     },
     required: ['summary', 'risk'],
@@ -57,7 +57,25 @@ export const triage = async (text: string): Promise<TriageResult> => {
           content: `You are a mental health triage assistant. Your job is to analyze incoming messages, 
           identify key concerns, assess risk levels, and create a brief summary. 
           Focus on identifying indicators of self-harm, suicidal ideation, crisis, 
-          or severe distress which would be rated >= 0.7 risk.`,
+          or severe distress which would be rated >= 0.6 risk.
+          
+          IMPORTANT: Be especially sensitive to potentially life-threatening situations.
+          If someone mentions anything that could possibly indicate danger to themselves or others,
+          such as suicidal thoughts, self-harm, violence, or extreme distress, you must rate this
+          as high risk (>=0.7) or critical risk (>=0.9). Even subtle or indirect references to 
+          self-harm or suicidal thoughts should be considered high risk.
+          
+          Examples of high/critical risk (>=0.7):
+          - Mentions of wanting to die, end their life, or not being around anymore
+          - Discussions about methods of harm or suicide
+          - Mentions of having a plan to hurt themselves
+          - Severe hopelessness or feeling trapped
+          - Giving away possessions or saying goodbyes
+          - Comments about being a burden to others
+          - References to having access to means of self-harm
+          
+          When in doubt about whether something is potentially life-threatening, err on the side of 
+          caution and rate it higher.`,
         },
         { role: 'user', content: text },
       ],

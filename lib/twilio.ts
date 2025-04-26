@@ -88,24 +88,20 @@ export const generateStreamTwiML = (websocketUrl: string, referenceCode?: string
     ? `Welcome to Mind Meld Peer Assist. Your reference code is ${referenceCode.split('').join(' ')}. Please share what's on your mind, and we'll connect you with a peer supporter.`
     : `Welcome to Mind Meld Peer Assist. Please share what's on your mind, and we'll connect you with a peer supporter.`;
 
-  return `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Say>${welcomeMessage}</Say>
-      <Connect>
-        <Stream url="${websocketUrl}" />
-      </Connect>
-      <Say>Thank you for reaching out. We'll be with you soon.</Say>
-    </Response>
-  `.trim();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${welcomeMessage}</Say>
+  <Connect>
+    <Stream url="${websocketUrl}" />
+  </Connect>
+  <Say>Thank you for reaching out. We'll be with you soon.</Say>
+</Response>`;
 };
 
 // Generate TwiML for standard voice response
 export const generateVoiceTwiML = (message: string) => {
-  return `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <Response>
-      <Say>${message}</Say>
-    </Response>
-  `.trim();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${message}</Say>
+</Response>`;
 }; 

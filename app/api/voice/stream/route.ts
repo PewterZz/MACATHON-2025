@@ -71,19 +71,47 @@ const storeInWeaviate = async (callSid: string, transcript: string, aiResponse: 
 };
 
 // Get AI response to user input
-const getAIResponse = async (transcript: string, isLongInteraction: boolean = false, referenceCode?: string): Promise<string> => {
+const getAIResponse = async (transcript: string, userContext: {
+  interactionTime: number,
+  hasAskedForConsent: boolean,
+  userHasConsented: boolean,
+  referenceCode?: string,
+}): Promise<string> => {
   try {
-    const systemContent = isLongInteraction
-      ? `You are a compassionate mental health first responder. 
+    let systemContent = '';
+    
+    // Different prompts based on the stage of the conversation
+    if (userContext.userHasConsented && userContext.referenceCode) {
+      // User has already consented and we have a reference code to provide
+      systemContent = `You are a compassionate mental health first responder. 
          Your role is to provide immediate support, validation, and guidance to someone in distress.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
-         Tell them their reference code is ${referenceCode || "not available"}, which they can use to continue this conversation on our web platform at ${APP_URL}.
-         Include the reference code and website in your response.
-         Do not identify yourself as an AI - just respond naturally as a supportive listener.`
-      : `You are a compassionate mental health first responder. 
+         Tell them their reference code is ${userContext.referenceCode}, which they can use to continue this conversation on our web platform at ${APP_URL}.
+         Include the reference code (spelled out letter by letter) and website in your response.
+         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+    } else if (userContext.hasAskedForConsent && !userContext.userHasConsented) {
+      // We've asked for consent but haven't received clear confirmation yet
+      systemContent = `You are a compassionate mental health first responder.
+         Your role is to determine if the user has given consent to create a session.
+         If their response sounds like agreement (yes, sure, okay, etc.), respond with CONSENT_GIVEN at the start of your message, then continue with a supportive response.
+         If they haven't clearly given consent, continue to be supportive but don't pressure them.
+         Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
+         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+    } else if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
+      // After 30 seconds, ask for consent to create a session if we haven't already
+      systemContent = `You are a compassionate mental health first responder.
+         Your role is to provide immediate support, validation, and guidance to someone in distress.
+         It's been over 30 seconds in the conversation, so you should now ask if they would like to create a session to speak with a peer supporter.
+         Explain that you'll provide a reference code they can use to continue this conversation on our web platform.
+         Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
+         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+    } else {
+      // Standard response for early in the conversation
+      systemContent = `You are a compassionate mental health first responder. 
          Your role is to provide immediate support, validation, and guidance to someone in distress.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
          Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+    }
     
     const response = await openai.chat.completions.create({
       model: "gpt-4",
@@ -95,12 +123,16 @@ const getAIResponse = async (transcript: string, isLongInteraction: boolean = fa
       max_tokens: 150,
     });
     
-    return response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
+    const aiResponse = response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
+    
+    // Check if the AI detected consent
+    if (aiResponse.startsWith("CONSENT_GIVEN")) {
+      return aiResponse.replace("CONSENT_GIVEN", "").trim();
+    }
+    
+    return aiResponse;
   } catch (error) {
     console.error('Error getting AI response:', error);
-    if (isLongInteraction && referenceCode) {
-      return `I'm here to support you. To continue our conversation on our web platform, please use reference code ${referenceCode} at ${APP_URL}.`;
-    }
     return "I'm here to listen. Please tell me what's on your mind.";
   }
 };
@@ -108,19 +140,24 @@ const getAIResponse = async (transcript: string, isLongInteraction: boolean = fa
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const callSid = searchParams.get('callSid');
-  const referenceCode = searchParams.get('referenceCode');
   
   if (!callSid) {
     return new Response('Missing CallSid', { status: 400 });
   }
   
-  console.log(`WebSocket stream request for call ${callSid} with reference code ${referenceCode || 'none'}`);
+  console.log(`WebSocket stream request for call ${callSid}`);
   
   const audioBuffers: ArrayBuffer[] = [];
   let transcriptText = '';
   let requestId: string | null = null;
-  let interactionTime = 0;
-  let referenceCodeProvided = false;
+  
+  // Context to track the conversation state
+  const userContext = {
+    interactionTime: 0,
+    hasAskedForConsent: false,
+    userHasConsented: false,
+    referenceCode: undefined as string | undefined
+  };
   
   try {
     const upgradeHeader = req.headers.get('Upgrade');
@@ -136,7 +173,7 @@ export async function GET(req: NextRequest) {
     
     // Set up an interval to track conversation length
     const intervalId = setInterval(() => {
-      interactionTime += 5;
+      userContext.interactionTime += 5;
     }, 5000);
     
     socket.onmessage = async (event) => {
@@ -159,68 +196,51 @@ export async function GET(req: NextRequest) {
             if (newTranscript && newTranscript.length > 0) {
               transcriptText += ' ' + newTranscript;
               
-              // Check if the request already exists or create it
-              if (!requestId) {
-                // Look up the request using callSid
-                const { data: existingRequest } = await supabaseAdmin
-                  .from('requests')
-                  .select('id, reference_code')
-                  .eq('channel', 'phone')
-                  .eq('external_id', callSid)
-                  .maybeSingle();
+              // Get AI response once we have enough transcript
+              if (transcriptText.length > 20) {
+                // Check if enough time has passed to ask for consent
+                if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
+                  userContext.hasAskedForConsent = true;
+                }
                 
-                if (existingRequest) {
-                  requestId = existingRequest.id;
-                  console.log(`Found existing request ID: ${requestId}`);
-                } else {
-                  // Create a new request if it doesn't exist yet
+                // Get AI response based on the current context
+                const aiResponse = await getAIResponse(transcriptText, userContext);
+                
+                // Check if this is the first time we're detecting consent
+                if (userContext.hasAskedForConsent && !userContext.userHasConsented && 
+                    (transcriptText.toLowerCase().includes('yes') || 
+                     transcriptText.toLowerCase().includes('sure') || 
+                     transcriptText.toLowerCase().includes('okay') || 
+                     transcriptText.toLowerCase().includes('ok'))) {
+                  
+                  userContext.userHasConsented = true;
+                  
+                  // Generate a reference code now that we have consent
+                  const { generateReferenceCode } = await import('@/lib/twilio');
+                  userContext.referenceCode = generateReferenceCode();
+                  
+                  // Create or update the request in the database
                   const result = await triage(transcriptText);
                   
-                  const { data: newRequest, error } = await supabaseAdmin
+                  const { data: newRequest, error: requestError } = await supabaseAdmin
                     .from('requests')
                     .insert({
-                      channel: 'phone',
+                      channel: 'voice',
                       external_id: callSid,
+                      reference_code: userContext.referenceCode,
                       summary: result.summary,
                       risk: result.risk,
-                      status: result.risk >= 0.7 ? 'urgent' : 'open',
-                      reference_code: referenceCode || null
+                      status: result.risk >= 0.6 ? 'urgent' : 'open',
                     })
                     .select()
                     .single();
                   
-                  if (error) {
-                    console.error('Error creating request:', error);
+                  if (requestError) {
+                    console.error('Error creating request:', requestError);
                   } else {
                     requestId = newRequest.id;
-                    console.log(`Created new request ID: ${requestId}`);
+                    console.log(`Created new request ID: ${requestId} with reference code ${userContext.referenceCode}`);
                   }
-                }
-              }
-              
-              // Get AI response once we have enough transcript
-              if (transcriptText.length > 20 && requestId) {
-                // Determine if we should provide the reference code based on interaction time
-                const shouldProvideReferenceCode = (interactionTime >= 60 || audioBuffers.length >= 500) && !referenceCodeProvided;
-                
-                let aiResponse;
-                if (shouldProvideReferenceCode) {
-                  // Get the reference code
-                  let code = referenceCode;
-                  if (!code) {
-                    const { data } = await supabaseAdmin
-                      .from('requests')
-                      .select('reference_code')
-                      .eq('id', requestId)
-                      .single();
-                    
-                    code = data?.reference_code;
-                  }
-                  
-                  aiResponse = await getAIResponse(transcriptText, true, code);
-                  referenceCodeProvided = true;
-                } else {
-                  aiResponse = await getAIResponse(transcriptText);
                 }
                 
                 // Convert AI response to speech and send it back
@@ -237,122 +257,52 @@ export async function GET(req: NextRequest) {
                   }));
                 }
                 
-                // Store in Weaviate
+                // Store in Weaviate and database only if we have created a request
                 if (requestId) {
                   storeInWeaviate(callSid, transcriptText, aiResponse, parseInt(requestId)).catch(err => {
                     console.error('Non-blocking Weaviate storage error:', err);
                   });
                   
-                  // Add user message
+                  // Add user message and AI response to the database
                   await supabaseAdmin
                     .from('messages')
-                    .insert({
-                      request_id: requestId,
-                      sender: 'caller',
-                      content: newTranscript.trim()
-                    });
-                  
-                  // Add AI response
-                  await supabaseAdmin
-                    .from('messages')
-                    .insert({
-                      request_id: requestId,
-                      sender: 'ai',
-                      content: aiResponse
-                    });
+                    .insert([
+                      {
+                        request_id: requestId,
+                        role: 'user',
+                        content: transcriptText,
+                      },
+                      {
+                        request_id: requestId,
+                        role: 'assistant',
+                        content: aiResponse,
+                      }
+                    ]);
                 }
               }
             }
           }
         } else if (msg.event === 'stop') {
-          // Handle end of stream
-          console.log('Streaming stopped');
+          console.log('Streaming stopped:', msg);
           clearInterval(intervalId);
           socket.close();
         }
       }
     };
     
-    socket.onerror = (error) => {
-      console.error(`WebSocket error: ${error}`);
+    socket.onclose = () => {
+      console.log(`WebSocket connection closed for call ${callSid}`);
       clearInterval(intervalId);
     };
     
-    socket.onclose = async () => {
-      console.log(`WebSocket connection closed for call ${callSid}`);
+    socket.onerror = (error) => {
+      console.error(`WebSocket error for call ${callSid}:`, error);
       clearInterval(intervalId);
-      
-      // If we have transcript but no messages saved yet
-      if (transcriptText.length > 0 && !requestId) {
-        // Create a new request if it doesn't exist
-        const result = await triage(transcriptText);
-        
-        // Check if a request already exists for this call
-        const { data: existingRequest } = await supabaseAdmin
-          .from('requests')
-          .select('id, reference_code')
-          .eq('channel', 'phone')
-          .eq('external_id', callSid)
-          .maybeSingle();
-        
-        if (existingRequest) {
-          // Update the existing request
-          await supabaseAdmin
-            .from('requests')
-            .update({
-              summary: result.summary,
-              risk: result.risk,
-              status: result.risk >= 0.7 ? 'urgent' : 'open',
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', existingRequest.id);
-          
-          // Add initial message from caller
-          await supabaseAdmin
-            .from('messages')
-            .insert({
-              request_id: existingRequest.id,
-              sender: 'caller',
-              content: transcriptText.trim()
-            });
-          
-          console.log(`Updated and added transcript to request ${existingRequest.id} for call ${callSid}`);
-        } else {
-          // Create a new request
-          const { data, error } = await supabaseAdmin
-            .from('requests')
-            .insert({
-              channel: 'phone',
-              external_id: callSid,
-              summary: result.summary,
-              risk: result.risk,
-              status: result.risk >= 0.7 ? 'urgent' : 'open',
-              reference_code: referenceCode || null
-            })
-            .select()
-            .single();
-          
-          if (error) {
-            console.error('Error creating request:', error);
-          } else {
-            // Add initial message from caller
-            await supabaseAdmin
-              .from('messages')
-              .insert({
-                request_id: data.id,
-                sender: 'caller',
-                content: transcriptText.trim()
-              });
-              
-            console.log(`Created request ${data.id} for call ${callSid}`);
-          }
-        }
-      }
     };
     
     return response;
   } catch (error) {
-    console.error('Stream error:', error);
+    console.error('Error in voice stream handler:', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 } 

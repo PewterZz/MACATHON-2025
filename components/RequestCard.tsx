@@ -26,10 +26,11 @@ export default function RequestCard({ request, profile, refreshQueue }: RequestC
   const [isLoading, setIsLoading] = useState(false)
   const { claimRequest } = useQueue()
   
-  const getRiskLevel = (risk: number): "low" | "medium" | "high" => {
+  const getRiskLevel = (risk: number): "low" | "medium" | "high" | "critical" => {
     if (risk < 0.3) return "low"
-    if (risk < 0.7) return "medium"
-    return "high"
+    if (risk < 0.6) return "medium"
+    if (risk < 0.8) return "high"
+    return "critical"
   }
   
   const riskLevel = getRiskLevel(request.risk)
@@ -57,10 +58,13 @@ export default function RequestCard({ request, profile, refreshQueue }: RequestC
             flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium
             ${riskLevel === "low" ? "bg-green-900/30 text-green-400" : 
             riskLevel === "medium" ? "bg-yellow-900/30 text-yellow-400" : 
-            "bg-red-900/30 text-red-400"}
+            riskLevel === "high" ? "bg-red-900/30 text-red-400" :
+            "bg-purple-900/30 text-purple-400"}
           `}>
             {riskLevel === "high" && <AlertTriangle className="h-3 w-3" />}
-            {riskLevel === "low" ? "Low Risk" : riskLevel === "medium" ? "Medium Risk" : "High Risk"}
+            {riskLevel === "critical" && <AlertTriangle className="h-3 w-3 animate-pulse" />}
+            {riskLevel === "low" ? "Low Risk" : riskLevel === "medium" ? "Medium Risk" : 
+            riskLevel === "high" ? "High Risk" : "Critical Risk"}
           </div>
           
           <div className="flex items-center gap-2">

@@ -189,22 +189,22 @@ export async function POST(req: NextRequest) {
       // Generate a reference code for anonymous web access
       const referenceCode = generateReferenceCode();
       
-      // Create a new request with reference code
-      const { data: newRequest, error } = await supabaseAdmin
+      // Create a new request in the database
+      const { data: newRequest, error: requestError } = await supabaseAdmin
         .from('requests')
         .insert({
           channel: 'sms',
           external_id: from,
+          reference_code: referenceCode,
           summary: result.summary,
           risk: result.risk,
-          status: result.risk >= 0.7 ? 'urgent' : 'open',
-          reference_code: referenceCode
+          status: result.risk >= 0.6 ? 'urgent' : 'open',
         })
         .select()
         .single();
       
-      if (error) {
-        console.error('Error creating request:', error);
+      if (requestError) {
+        console.error('Error creating request:', requestError);
         return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
       }
       

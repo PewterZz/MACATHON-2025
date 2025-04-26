@@ -59,20 +59,20 @@ export async function POST(req: NextRequest) {
         const result = await triage(message);
         
         // Create a new request
-        const { data: newRequest, error } = await supabaseAdmin
+        const { data: newRequest, error: requestError } = await supabaseAdmin
           .from('requests')
           .insert({
             channel: 'discord',
             external_id: userId,
             summary: result.summary,
             risk: result.risk,
-            status: result.risk >= 0.7 ? 'urgent' : 'open'
+            status: result.risk >= 0.6 ? 'urgent' : 'open'
           })
           .select()
           .single();
         
-        if (error) {
-          throw new Error(`Failed to create request: ${error.message}`);
+        if (requestError) {
+          throw new Error(`Failed to create request: ${requestError.message}`);
         }
         
         // Add the initial message

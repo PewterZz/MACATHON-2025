@@ -249,23 +249,22 @@ export async function POST(req: NextRequest) {
         const referenceCode = generateReferenceCode();
         console.log(`Generated reference code: ${referenceCode}`);
         
-        // Create a new request with reference code
-        console.log('Creating new request in Supabase');
-        const { data: newRequest, error: newReqError } = await supabaseAdmin
+        // Create a new request in the database
+        const { data: newRequest, error: requestError } = await supabaseAdmin
           .from('requests')
           .insert({
             channel: 'whatsapp',
             external_id: phoneNumber,
+            reference_code: referenceCode,
             summary: result.summary,
             risk: result.risk,
-            status: result.risk >= 0.7 ? 'urgent' : 'open',
-            reference_code: referenceCode
+            status: result.risk >= 0.6 ? 'urgent' : 'open',
           })
           .select()
           .single();
         
-        if (newReqError) {
-          console.error('Error creating request in Supabase:', newReqError);
+        if (requestError) {
+          console.error('Error creating request in Supabase:', requestError);
           throw new Error('Failed to create request in database');
         }
         

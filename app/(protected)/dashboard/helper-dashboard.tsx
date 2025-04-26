@@ -134,25 +134,25 @@ const TabItem = ({ label, value, icon: Icon }: TabItemProps) => {
 export const RequestCard = ({ request, onClaim, className }: RequestCardProps) => {
   // Determine risk color classes for the badge (text, border, background)
   const getRiskBadgeColorClasses = (risk: number) => {
-    if (risk >= 0.8) return 'text-red-600 border-red-500/60 bg-red-500/10';
-    if (risk >= 0.5) return 'text-yellow-600 border-yellow-500/60 bg-yellow-500/10';
-    if (risk >= 0.2) return 'text-blue-600 border-blue-500/60 bg-blue-500/10'; // Medium risk
+    if (risk >= 0.8) return 'text-purple-600 border-purple-500/60 bg-purple-500/10'; // Critical risk
+    if (risk >= 0.6) return 'text-red-600 border-red-500/60 bg-red-500/10'; // High risk
+    if (risk >= 0.3) return 'text-yellow-600 border-yellow-500/60 bg-yellow-500/10'; // Medium risk
     return 'text-green-600 border-green-500/60 bg-green-500/10'; // Low risk
   };
 
   // Determine background color class for the risk indicator circle
-  const getRiskCircleBgClass = (risk: number) => {
-    if (risk >= 0.8) return 'bg-red-500';
-    if (risk >= 0.5) return 'bg-yellow-500';
-    if (risk >= 0.2) return 'bg-blue-500';
+  const getRiskIndicatorClass = (risk: number) => {
+    if (risk >= 0.8) return 'bg-purple-500 animate-pulse'; // Critical risk with pulsing effect
+    if (risk >= 0.6) return 'bg-red-500';
+    if (risk >= 0.3) return 'bg-yellow-500';
     return 'bg-green-500';
   };
 
   // Determine risk label
   const getRiskLabel = (risk: number) => {
     if (risk >= 0.8) return 'Critical';
-    if (risk >= 0.5) return 'High';
-    if (risk >= 0.2) return 'Medium';
+    if (risk >= 0.6) return 'High';
+    if (risk >= 0.3) return 'Medium';
     return 'Low';
   };
 
@@ -170,7 +170,7 @@ export const RequestCard = ({ request, onClaim, className }: RequestCardProps) =
           <div className="flex items-center gap-2">
             {/* Risk Label Badge with colored circle and thicker border */}
             <Badge variant="outline" className={`border-2 capitalize font-medium text-xs px-2 py-1 flex items-center ${getRiskBadgeColorClasses(request.risk)}`}>
-              <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${getRiskCircleBgClass(request.risk)}`}></span>
+              <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${getRiskIndicatorClass(request.risk)}`}></span>
               {getRiskLabel(request.risk)}
             </Badge>
             {/* Risk Percentage Badge */}
