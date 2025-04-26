@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     // Create a call
     const call = await client.calls.create({
       to: to,
-      from: process.env.TWILIO_PHONE_NUMBER,
+      from: process.env.TWILIO_NUMBER,
       url: `${baseUrl}/api/twilio/voice`,
       statusCallback: `${baseUrl}/api/twilio/voice/status`,
       statusCallbackMethod: 'POST',
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
     // Create a call
     const call = await client.calls.create({
       to: to,
-      from: process.env.TWILIO_PHONE_NUMBER,
+      from: process.env.TWILIO_NUMBER,
       url: `${baseUrl}/api/twilio/voice`,
       statusCallback: `${baseUrl}/api/twilio/voice/status`,
       statusCallbackMethod: 'POST',
