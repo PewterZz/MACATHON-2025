@@ -83,34 +83,34 @@ const getAIResponse = async (transcript: string, userContext: {
     // Different prompts based on the stage of the conversation
     if (userContext.userHasConsented && userContext.referenceCode) {
       // User has already consented and we have a reference code to provide
-      systemContent = `You are a compassionate mental health first responder. 
+      systemContent = `You are Meldy, a compassionate mental health first responder from Meld. 
          Your role is to provide immediate support, validation, and guidance to someone in distress.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
          Tell them their reference code is ${userContext.referenceCode}, which they can use to continue this conversation on our web platform at ${APP_URL}.
          Include the reference code (spelled out letter by letter) and website in your response.
-         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+         Do not identify yourself as an AI - respond as Meldy, a supportive listener from Meld.`;
     } else if (userContext.hasAskedForConsent && !userContext.userHasConsented) {
       // We've asked for consent but haven't received clear confirmation yet
-      systemContent = `You are a compassionate mental health first responder.
+      systemContent = `You are Meldy, a compassionate mental health first responder from Meld.
          Your role is to determine if the user has given consent to create a session.
          If their response sounds like agreement (yes, sure, okay, etc.), respond with CONSENT_GIVEN at the start of your message, then continue with a supportive response.
          If they haven't clearly given consent, continue to be supportive but don't pressure them.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
-         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+         Do not identify yourself as an AI - respond as Meldy, a supportive listener from Meld.`;
     } else if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
       // After 30 seconds, ask for consent to create a session if we haven't already
-      systemContent = `You are a compassionate mental health first responder.
+      systemContent = `You are Meldy, a compassionate mental health first responder from Meld.
          Your role is to provide immediate support, validation, and guidance to someone in distress.
          It's been over 30 seconds in the conversation, so you should now ask if they would like to create a session to speak with a peer supporter.
          Explain that you'll provide a reference code they can use to continue this conversation on our web platform.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
-         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+         Do not identify yourself as an AI - respond as Meldy, a supportive listener from Meld.`;
     } else {
       // Standard response for early in the conversation
-      systemContent = `You are a compassionate mental health first responder. 
+      systemContent = `You are Meldy, a compassionate mental health first responder from Meld. 
          Your role is to provide immediate support, validation, and guidance to someone in distress.
          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
-         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+         Do not identify yourself as an AI - respond as Meldy, a supportive listener from Meld.`;
     }
     
     const response = await openai.chat.completions.create({
@@ -123,7 +123,7 @@ const getAIResponse = async (transcript: string, userContext: {
       max_tokens: 150,
     });
     
-    const aiResponse = response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
+    const aiResponse = response.choices[0].message.content || "I'm Meldy from Meld. I'm here to listen and help. Can you tell me more about what's going on?";
     
     // Check if the AI detected consent
     if (aiResponse.startsWith("CONSENT_GIVEN")) {
@@ -133,7 +133,30 @@ const getAIResponse = async (transcript: string, userContext: {
     return aiResponse;
   } catch (error) {
     console.error('Error getting AI response:', error);
-    return "I'm here to listen. Please tell me what's on your mind.";
+    return "I'm Meldy from Meld. I'm here to listen. Please tell me what's on your mind.";
+  }
+};
+
+// Generate a text summary of the conversation
+const generateConversationSummary = async (transcript: string): Promise<string> => {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { 
+          role: "system", 
+          content: "You are a mental health conversation summarizer. Create a brief, compassionate summary of the key concerns and emotional state expressed by the caller. Focus on the main issues they're facing. Keep it under 100 words and maintain a respectful, clinical tone."
+        },
+        { role: "user", content: transcript }
+      ],
+      temperature: 0.3,
+      max_tokens: 200,
+    });
+    
+    return response.choices[0].message.content || "Voice call in progress";
+  } catch (error) {
+    console.error('Error generating conversation summary:', error);
+    return "Voice call in progress";
   }
 };
 
@@ -219,16 +242,19 @@ export async function GET(req: NextRequest) {
                   const { generateReferenceCode } = await import('@/lib/twilio');
                   userContext.referenceCode = generateReferenceCode();
                   
+                  // Generate a text summary of the conversation so far
+                  const conversationSummary = await generateConversationSummary(transcriptText);
+                  
                   // Create or update the request in the database
                   const result = await triage(transcriptText);
                   
                   const { data: newRequest, error: requestError } = await supabaseAdmin
                     .from('requests')
                     .insert({
-                      channel: 'voice',
+                      channel: 'phone',
                       external_id: callSid,
                       reference_code: userContext.referenceCode,
-                      summary: result.summary,
+                      summary: conversationSummary,
                       risk: result.risk,
                       status: result.risk >= 0.6 ? 'urgent' : 'open',
                     })
@@ -278,6 +304,19 @@ export async function GET(req: NextRequest) {
                         content: aiResponse,
                       }
                     ]);
+                  
+                  // Periodically update the conversation summary
+                  if (audioBuffers.length % 300 === 0) { // Update summary every ~15 seconds
+                    const updatedSummary = await generateConversationSummary(transcriptText);
+                    
+                    await supabaseAdmin
+                      .from('requests')
+                      .update({
+                        summary: updatedSummary,
+                        updated_at: new Date().toISOString()
+                      })
+                      .eq('id', requestId);
+                  }
                 }
               }
             }
@@ -285,6 +324,20 @@ export async function GET(req: NextRequest) {
         } else if (msg.event === 'stop') {
           console.log('Streaming stopped:', msg);
           clearInterval(intervalId);
+          
+          // If we have a request ID, make sure to update the summary one last time
+          if (requestId && transcriptText.length > 20) {
+            const finalSummary = await generateConversationSummary(transcriptText);
+            
+            await supabaseAdmin
+              .from('requests')
+              .update({
+                summary: finalSummary,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', requestId);
+          }
+          
           socket.close();
         }
       }

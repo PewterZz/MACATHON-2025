@@ -85,8 +85,8 @@ export const sendWhatsApp = async (to: string, body: string) => {
 // Generate TwiML for voice streaming
 export const generateStreamTwiML = (websocketUrl: string, referenceCode?: string) => {
   const welcomeMessage = referenceCode 
-    ? `Welcome to Mind Meld Peer Assist. Your reference code is ${referenceCode.split('').join(' ')}. Please share what's on your mind, and we'll connect you with a peer supporter.`
-    : `Welcome to Mind Meld Peer Assist. Please share what's on your mind, and we'll connect you with a peer supporter.`;
+    ? `Hello, I'm Meldy from Meld. Your reference code is ${referenceCode.split('').join(' ')}. Please share what's on your mind, and we'll connect you with a peer supporter.`
+    : `Hello, I'm Meldy from Meld. Please share what's on your mind, and we'll connect you with a peer supporter.`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
