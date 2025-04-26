@@ -20,7 +20,7 @@ export interface CoachingResponse {
 
 export async function triage(text: string): Promise<TriageResult> {
   const response = await openai.chat.completions.create({
-    model: "gpt-4",
+    model: "gpt-4o",
     messages: [
       {
         role: "system",

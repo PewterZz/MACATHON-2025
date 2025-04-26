@@ -84,6 +84,11 @@ export const sendWhatsApp = async (to: string, body: string) => {
 
 // Generate TwiML for voice streaming
 export const generateStreamTwiML = (websocketUrl: string, referenceCode?: string) => {
+  // Ensure the websocketUrl is correctly formatted
+  const validWebsocketUrl = websocketUrl.startsWith('wss://') 
+    ? websocketUrl 
+    : `wss://${websocketUrl}`;
+    
   const welcomeMessage = referenceCode 
     ? `Hello, I'm Meldy from Meld. Your reference code is ${referenceCode.split('').join(' ')}. Please share what's on your mind, and we'll connect you with a peer supporter.`
     : `Hello, I'm Meldy from Meld. Please share what's on your mind, and we'll connect you with a peer supporter.`;
@@ -92,7 +97,7 @@ export const generateStreamTwiML = (websocketUrl: string, referenceCode?: string
 <Response>
   <Say>${welcomeMessage}</Say>
   <Connect>
-    <Stream url="${websocketUrl}" />
+    <Stream url="${validWebsocketUrl}" />
   </Connect>
   <Say>Thank you for reaching out. We'll be with you soon.</Say>
 </Response>`;

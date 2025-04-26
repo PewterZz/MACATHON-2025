@@ -145,6 +145,7 @@ export default function StudentDashboard() {
   const [connectionError, setConnectionError] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isClosingRequest, setIsClosingRequest] = useState(false)
+  const [requestsData, setRequestsData] = useState<Record<string, any>>({})
 
   // Handle tab change
   const handleTabChange = (value: string) => {
@@ -225,7 +226,7 @@ export default function StudentDashboard() {
       // Find active (non-closed) requests created by this user
       const { data, error } = await supabase
         .from('requests')
-        .select('id')
+        .select('id, summary, risk, status, created_at')
         .eq('user_id', user.id)
         .neq('status', 'closed') // Only get non-closed requests
         .order('created_at', { ascending: false })
@@ -260,8 +261,15 @@ export default function StudentDashboard() {
       }
       
       console.log("Request data retrieved successfully:", { count: data.length });
-      const requests = data.map((r: { id: string }) => r.id)
+      const requests = data.map((r) => r.id)
       setActiveRequests(requests)
+      
+      // Store the full request data in state for display
+      const requestsMap = data.reduce((acc, request) => {
+        acc[request.id] = request;
+        return acc;
+      }, {} as Record<string, any>);
+      setRequestsData(requestsMap);
       
       // Set the first request as selected if there is one and nothing is currently selected
       if (requests.length > 0 && !selectedChat) {
@@ -390,20 +398,60 @@ export default function StudentDashboard() {
         throw new Error("Failed to initialize Supabase client")
       }
       
+      // Check if the user has reached the request limit (max 5 active requests)
+      const { data: activeRequestsData, error: activeRequestsError } = await supabase
+        .from('requests')
+        .select('id')
+        .eq('user_id', user?.id)
+        .neq('status', 'closed')
+      
+      if (activeRequestsError) {
+        console.error("Failed to check active requests:", activeRequestsError);
+        throw activeRequestsError;
+      }
+      
+      if (activeRequestsData && activeRequestsData.length >= 5) {
+        toast({
+          title: "Request Limit Reached",
+          description: "You can have a maximum of 5 active requests at a time. Please close some existing requests before creating a new one.",
+          variant: "destructive"
+        });
+        setIsSubmitting(false);
+        return;
+      }
+      
       console.log("Submitting request:", {
         userId: user?.id,
         descriptionLength: issueDescription.length
       });
       
-      // Create a new request
+      // Process with AI triage first to get summary and risk assessment
+      let triageResult;
+      try {
+        // Import the triage function
+        const { triage } = await import('@/lib/ai');
+        triageResult = await triage(issueDescription);
+        console.log("Triage result:", triageResult);
+      } catch (triageError) {
+        console.error("Triage analysis failed:", triageError);
+        // Enhanced fallback with more complete data structure and higher default risk as precaution
+        triageResult = {
+          summary: issueDescription,
+          risk: 0.5, // Moderate risk as a precaution
+          tags: ['needs-review'], // Add a tag indicating this needs manual review
+          suggestedApproach: 'Please review this request manually as AI analysis failed.'
+        };
+      }
+      
+      // Create a new request with the triage results
       const { data, error } = await supabase
         .from('requests')
         .insert({
-          summary: issueDescription.substring(0, 100),
+          summary: triageResult.summary,
           channel: 'web',
-          status: 'open',
+          status: triageResult.risk >= 0.6 ? 'urgent' : 'open',
           user_id: user?.id,
-          risk: 0.3, // Default risk until AI analyzes
+          risk: triageResult.risk,
           external_id: `web_${Date.now()}`
         })
         .select('id')
@@ -434,19 +482,6 @@ export default function StudentDashboard() {
       if (messageError) {
         console.error("Failed to add message:", messageError);
         throw messageError;
-      }
-      
-      // Analyze with AI (this would ideally happen server-side)
-      try {
-        const analysisResponse = await fetch(`/api/chat/${data.id}/analyze`, {
-          method: 'POST'
-        })
-        
-        if (!analysisResponse.ok) {
-          console.warn('AI analysis failed but request was created')
-        }
-      } catch (aiError) {
-        console.error('AI analysis error:', aiError)
       }
       
       // Reset form and show success message
@@ -876,7 +911,7 @@ export default function StudentDashboard() {
                           placeholder="I'm feeling overwhelmed with my coursework and not sure how to manage my time effectively..."
                           value={issueDescription}
                           onChange={(e) => setIssueDescription(e.target.value)}
-                          rows={6}
+                          rows={10}
                           className="bg-indigo-950 border-indigo-700 text-white placeholder:text-indigo-400 resize-none"
                         />
                       </div>
@@ -1016,30 +1051,61 @@ export default function StudentDashboard() {
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          {activeRequests.map((requestId) => (
-                            <div
-                              key={requestId}
-                              onClick={() => setSelectedChat(requestId)}
-                              className={cn(
-                                "flex items-center justify-between w-full p-3 mb-1 rounded-md transition-colors cursor-pointer",
-                                selectedChat === requestId
-                                  ? "bg-indigo-600 text-white"
-                                  : "bg-indigo-800 text-white hover:bg-indigo-700"
-                              )}
-                            >
-                              <div className="flex items-center">
-                                <MessageSquare className="h-4 w-4 mr-2" />
-                                <span className="truncate">#{requestId.substring(0, 8)}</span>
-                              </div>
-                              <div className="flex items-center space-x-1">
-                                {newMessagesByRequest[requestId] > 0 && (
-                                  <Badge variant="destructive" className="ml-auto">
-                                    {newMessagesByRequest[requestId]}
-                                  </Badge>
+                          {activeRequests.map((requestId) => {
+                            const request = requestsData[requestId] || {};
+                            const risk = request.risk || 0;
+                            const riskLabel = risk >= 0.8 ? "Critical" : 
+                                             risk >= 0.6 ? "High" : 
+                                             risk >= 0.3 ? "Medium" : "Low";
+                            const timeDiff = request.created_at ? new Date(Date.now() - new Date(request.created_at).getTime()) : null;
+                            const timeAgo = timeDiff ? 
+                              timeDiff.getUTCHours() >= 1 ? 
+                                `${timeDiff.getUTCHours()} hr${timeDiff.getUTCHours() > 1 ? 's' : ''} ago` : 
+                                `${timeDiff.getUTCMinutes()} min ago` : '0 min ago';
+                            
+                            return (
+                              <div
+                                key={requestId}
+                                onClick={() => setSelectedChat(requestId)}
+                                className={cn(
+                                  "flex flex-col w-full p-3 mb-1 rounded-md transition-colors cursor-pointer",
+                                  selectedChat === requestId
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-indigo-800 text-white hover:bg-indigo-700"
                                 )}
+                              >
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="flex items-center">
+                                    <MessageSquare className="h-4 w-4 mr-2" />
+                                    <span className="truncate">#{requestId.substring(0, 8)}</span>
+                                  </div>
+                                  <div className="flex items-center space-x-1">
+                                    {newMessagesByRequest[requestId] > 0 && (
+                                      <Badge variant="destructive" className="ml-auto">
+                                        {newMessagesByRequest[requestId]}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                
+                                <div className="mt-2 text-xs flex justify-between items-center">
+                                  <Badge className={
+                                    risk >= 0.8 ? "bg-purple-600" : 
+                                    risk >= 0.6 ? "bg-red-600" : 
+                                    risk >= 0.3 ? "bg-amber-600" : "bg-green-600"
+                                  }>
+                                    {riskLabel}
+                                    {risk >= 0.3 && <span className="ml-1">{Math.round(risk * 100)}%</span>}
+                                  </Badge>
+                                  <span className="text-indigo-200">{timeAgo}</span>
+                                </div>
+
+                                <p className="mt-2 text-sm line-clamp-4 text-indigo-100 min-h-[4rem]">
+                                  {request.summary || ""}
+                                </p>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
 

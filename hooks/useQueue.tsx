@@ -25,6 +25,8 @@ export function useQueue() {
   const fetchQueue = useCallback(async () => {
     try {
       setIsLoading(true)
+      
+      // Get the requests from the database
       const { data, error } = await supabase
         .from('requests')
         .select('*')
@@ -33,11 +35,87 @@ export function useQueue() {
         .order('created_at', { ascending: true })
 
       if (error) throw error
+      
+      if (!data || data.length === 0) {
+        setQueue([])
+        return
+      }
+
+      // Find any requests that might need triage (no summary or risk score)
+      const requestsNeedingTriage = data.filter(request => 
+        !request.summary || 
+        request.summary.length < 10 || // Very short summary
+        request.risk === null || 
+        request.risk === undefined
+      );
+      
+      // If we have requests needing triage, process them
+      if (requestsNeedingTriage.length > 0) {
+        try {
+          // Import the triage function dynamically
+          const { triage } = await import('@/lib/ai');
+          
+          // Process each request that needs triage
+          for (const request of requestsNeedingTriage) {
+            try {
+              // Get the first message from this request
+              const { data: messageData } = await supabase
+                .from('messages')
+                .select('content')
+                .eq('request_id', request.id)
+                .eq('sender', 'caller')
+                .order('ts', { ascending: true })
+                .limit(1);
+              
+              if (messageData && messageData.length > 0) {
+                const content = messageData[0].content;
+                
+                if (content && content.trim().length > 0) {
+                  console.log(`Processing triage for request ${request.id} with content: ${content.substring(0, 50)}...`);
+                  
+                  // Perform AI triage
+                  const triageResult = await triage(content);
+                  console.log(`Triage result for ${request.id}:`, triageResult);
+                  
+                  // Update the request with the triage results
+                  await supabase
+                    .from('requests')
+                    .update({
+                      summary: triageResult.summary,
+                      risk: triageResult.risk,
+                      // Mark high-risk cases as urgent
+                      status: triageResult.risk >= 0.6 ? 'urgent' : 'open'
+                    })
+                    .eq('id', request.id);
+                  
+                  // Update the request in our local data
+                  const index = data.findIndex(r => r.id === request.id);
+                  if (index !== -1) {
+                    data[index].summary = triageResult.summary;
+                    data[index].risk = triageResult.risk;
+                    data[index].status = triageResult.risk >= 0.6 ? 'urgent' : 'open';
+                  }
+                } else {
+                  console.log(`Request ${request.id} has an empty message content`);
+                }
+              } else {
+                console.log(`No message found for request ${request.id}`);
+              }
+            } catch (triageError) {
+              console.error(`Failed to triage request ${request.id}:`, triageError);
+              // Continue with other requests even if one fails
+            }
+          }
+        } catch (importError) {
+          console.error("Failed to import triage function:", importError);
+          // Continue with processing without triage
+        }
+      }
 
       // Convert to expected format and add tags based on summary
       const formattedData = data.map(request => {
         // Generate tags based on summary keywords
-        const summary = request.summary.toLowerCase()
+        const summary = (request.summary || '').toLowerCase();
         const tags: string[] = []
         
         if (summary.includes('anxiety') || summary.includes('stress') || summary.includes('panic')) {
@@ -54,6 +132,9 @@ export function useQueue() {
         }
         if (summary.includes('work') || summary.includes('job') || summary.includes('career')) {
           tags.push('work-life')
+        }
+        if (summary.includes('suicid') || summary.includes('kill') || summary.includes('die') || summary.includes('harm')) {
+          tags.push('urgent');
         }
         
         // Add a default tag if none were added
@@ -75,11 +156,11 @@ export function useQueue() {
 
         return {
           id: request.id,
-          risk: request.risk,
-          summary: request.summary,
+          risk: request.risk || 0, // Default to 0 if risk is null
+          summary: request.summary || 'No summary available', // Default text if missing
           tags,
           timestamp: timeDisplay,
-          channel: request.channel,
+          channel: request.channel || 'web',
           status: request.status,
           claimed_by: request.claimed_by
         }

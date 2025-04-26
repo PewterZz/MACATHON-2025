@@ -185,7 +185,7 @@ export const RequestCard = ({ request, onClaim, className }: RequestCardProps) =
         </CardDescription>
       </CardHeader>
       <CardContent className="py-3 flex-grow">
-        <p className="text-sm text-slate-200 mb-3 line-clamp-3" title={request.summary}>
+        <p className="text-sm text-slate-200 mb-3 line-clamp-5 text-base min-h-[5rem]" title={request.summary}>
           {request.summary}
         </p>
         <div className="flex flex-wrap gap-1">

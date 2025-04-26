@@ -6,7 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 export const runtime = 'nodejs';
 
 // App URL for sharing
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://meld-git-main-pewterzzs-projects.vercel.app';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'meld-git-main-pewterzzs-projects.vercel.app';
 
 export async function POST(req: NextRequest) {
   try {

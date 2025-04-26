@@ -4,11 +4,13 @@ import { triage } from '@/lib/ai';
 import { storeConversation } from '@/lib/weaviate';
 import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase';
+import { IncomingMessage } from 'http';
+import { Socket } from 'net';
 
 export const runtime = 'nodejs';
 
 // App URL for sharing
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://meld-git-main-pewterzzs-projects.vercel.app';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'meld-git-main-pewterzzs-projects.vercel.app';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -182,180 +184,218 @@ export async function GET(req: NextRequest) {
     referenceCode: undefined as string | undefined
   };
   
-  try {
-    const upgradeHeader = req.headers.get('Upgrade');
-    if (upgradeHeader !== 'websocket') {
-      return new Response('Expected Upgrade: websocket', { status: 426 });
-    }
-    
-    const { socket, response } = Deno.upgradeWebSocket(req as any);
-    
-    socket.onopen = () => {
-      console.log(`WebSocket connection established for call ${callSid}`);
-    };
+  // Create WebSocket server
+  const wss = new WebSocketServer({ noServer: true });
+  
+  // Handle connection
+  const handleConnection = async (socket: any) => {
+    console.log(`WebSocket connection established for call ${callSid}`);
     
     // Set up an interval to track conversation length
     const intervalId = setInterval(() => {
       userContext.interactionTime += 5;
     }, 5000);
     
-    socket.onmessage = async (event) => {
-      if (typeof event.data === 'string') {
-        const msg = JSON.parse(event.data);
-        
-        // Handle Twilio WebSocket protocol messages
-        if (msg.event === 'start') {
-          console.log('Streaming started:', msg);
-        } else if (msg.event === 'media') {
-          // Decode base64 audio data
-          const audioData = Uint8Array.from(atob(msg.media.payload), c => c.charCodeAt(0)).buffer;
-          audioBuffers.push(audioData);
+    // Handle messages
+    socket.on('message', async (data: any) => {
+      try {
+        if (typeof data === 'string') {
+          const msg = JSON.parse(data);
           
-          // Process audio in chunks (e.g., every 5 seconds)
-          if (audioBuffers.length % 100 === 0) {
-            // Process accumulated audio
-            const newTranscript = await speechToText(new Blob([...audioBuffers]).arrayBuffer());
+          // Handle Twilio WebSocket protocol messages
+          if (msg.event === 'start') {
+            console.log('Streaming started:', msg);
+          } else if (msg.event === 'media') {
+            // Decode base64 audio data
+            const audioData = Buffer.from(msg.media.payload, 'base64').buffer;
+            audioBuffers.push(audioData);
             
-            if (newTranscript && newTranscript.length > 0) {
-              transcriptText += ' ' + newTranscript;
-              
-              // Get AI response once we have enough transcript
-              if (transcriptText.length > 20) {
-                // Check if enough time has passed to ask for consent
-                if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
-                  userContext.hasAskedForConsent = true;
+            // Process audio in chunks (e.g., every 5 seconds)
+            if (audioBuffers.length % 100 === 0) {
+              try {
+                // Combine audio buffers
+                const combinedLength = audioBuffers.reduce((acc, curr) => acc + curr.byteLength, 0);
+                const combined = new Uint8Array(combinedLength);
+                
+                let offset = 0;
+                for (const buffer of audioBuffers) {
+                  combined.set(new Uint8Array(buffer), offset);
+                  offset += buffer.byteLength;
                 }
                 
-                // Get AI response based on the current context
-                const aiResponse = await getAIResponse(transcriptText, userContext);
+                // Process accumulated audio
+                const newTranscript = await speechToText(combined.buffer);
                 
-                // Check if this is the first time we're detecting consent
-                if (userContext.hasAskedForConsent && !userContext.userHasConsented && 
-                    (transcriptText.toLowerCase().includes('yes') || 
-                     transcriptText.toLowerCase().includes('sure') || 
-                     transcriptText.toLowerCase().includes('okay') || 
-                     transcriptText.toLowerCase().includes('ok'))) {
+                if (newTranscript && newTranscript.length > 0) {
+                  transcriptText += ' ' + newTranscript;
                   
-                  userContext.userHasConsented = true;
-                  
-                  // Generate a reference code now that we have consent
-                  const { generateReferenceCode } = await import('@/lib/twilio');
-                  userContext.referenceCode = generateReferenceCode();
-                  
-                  // Generate a text summary of the conversation so far
-                  const conversationSummary = await generateConversationSummary(transcriptText);
-                  
-                  // Create or update the request in the database
-                  const result = await triage(transcriptText);
-                  
-                  const { data: newRequest, error: requestError } = await supabaseAdmin
-                    .from('requests')
-                    .insert({
-                      channel: 'phone',
-                      external_id: callSid,
-                      reference_code: userContext.referenceCode,
-                      summary: conversationSummary,
-                      risk: result.risk,
-                      status: result.risk >= 0.6 ? 'urgent' : 'open',
-                    })
-                    .select()
-                    .single();
-                  
-                  if (requestError) {
-                    console.error('Error creating request:', requestError);
-                  } else {
-                    requestId = newRequest.id;
-                    console.log(`Created new request ID: ${requestId} with reference code ${userContext.referenceCode}`);
-                  }
-                }
-                
-                // Convert AI response to speech and send it back
-                const speechBuffer = await textToSpeech(aiResponse);
-                if (speechBuffer.byteLength > 0) {
-                  // Encode the audio to base64 and send it back as a media message
-                  const base64Audio = Buffer.from(speechBuffer).toString('base64');
-                  socket.send(JSON.stringify({
-                    event: 'media',
-                    streamSid: msg.streamSid,
-                    media: {
-                      payload: base64Audio
+                  // Get AI response once we have enough transcript
+                  if (transcriptText.length > 20) {
+                    // Check if enough time has passed to ask for consent
+                    if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
+                      userContext.hasAskedForConsent = true;
                     }
-                  }));
-                }
-                
-                // Store in Weaviate and database only if we have created a request
-                if (requestId) {
-                  storeInWeaviate(callSid, transcriptText, aiResponse, parseInt(requestId)).catch(err => {
-                    console.error('Non-blocking Weaviate storage error:', err);
-                  });
-                  
-                  // Add user message and AI response to the database
-                  await supabaseAdmin
-                    .from('messages')
-                    .insert([
-                      {
-                        request_id: requestId,
-                        role: 'user',
-                        content: transcriptText,
-                      },
-                      {
-                        request_id: requestId,
-                        role: 'assistant',
-                        content: aiResponse,
-                      }
-                    ]);
-                  
-                  // Periodically update the conversation summary
-                  if (audioBuffers.length % 300 === 0) { // Update summary every ~15 seconds
-                    const updatedSummary = await generateConversationSummary(transcriptText);
                     
-                    await supabaseAdmin
-                      .from('requests')
-                      .update({
-                        summary: updatedSummary,
-                        updated_at: new Date().toISOString()
-                      })
-                      .eq('id', requestId);
+                    // Get AI response based on the current context
+                    const aiResponse = await getAIResponse(transcriptText, userContext);
+                    
+                    // Check if this is the first time we're detecting consent
+                    if (userContext.hasAskedForConsent && !userContext.userHasConsented && 
+                        (transcriptText.toLowerCase().includes('yes') || 
+                         transcriptText.toLowerCase().includes('sure') || 
+                         transcriptText.toLowerCase().includes('okay') || 
+                         transcriptText.toLowerCase().includes('ok'))) {
+                      
+                      userContext.userHasConsented = true;
+                      
+                      // Generate a reference code now that we have consent
+                      const { generateReferenceCode } = await import('@/lib/twilio');
+                      userContext.referenceCode = generateReferenceCode();
+                      
+                      // Generate a text summary of the conversation so far
+                      const conversationSummary = await generateConversationSummary(transcriptText);
+                      
+                      // Create or update the request in the database
+                      const result = await triage(transcriptText);
+                      
+                      const { data: newRequest, error: requestError } = await supabaseAdmin
+                        .from('requests')
+                        .insert({
+                          channel: 'phone',
+                          external_id: callSid,
+                          reference_code: userContext.referenceCode,
+                          summary: conversationSummary,
+                          risk: result.risk,
+                          status: result.risk >= 0.6 ? 'urgent' : 'open',
+                        })
+                        .select()
+                        .single();
+                      
+                      if (requestError) {
+                        console.error('Error creating request:', requestError);
+                      } else {
+                        requestId = newRequest.id;
+                        console.log(`Created new request ID: ${requestId} with reference code ${userContext.referenceCode}`);
+                      }
+                    }
+                    
+                    // Convert AI response to speech and send it back
+                    const speechBuffer = await textToSpeech(aiResponse);
+                    if (speechBuffer.byteLength > 0) {
+                      // Encode the audio to base64 and send it back as a media message
+                      const base64Audio = Buffer.from(speechBuffer).toString('base64');
+                      socket.send(JSON.stringify({
+                        event: 'media',
+                        streamSid: msg.streamSid,
+                        media: {
+                          payload: base64Audio
+                        }
+                      }));
+                    }
+                    
+                    // Store in Weaviate and database only if we have created a request
+                    if (requestId) {
+                      storeInWeaviate(callSid, transcriptText, aiResponse, parseInt(requestId)).catch(err => {
+                        console.error('Non-blocking Weaviate storage error:', err);
+                      });
+                      
+                      // Add user message and AI response to the database
+                      await supabaseAdmin
+                        .from('messages')
+                        .insert([
+                          {
+                            request_id: requestId,
+                            role: 'user',
+                            content: transcriptText,
+                          },
+                          {
+                            request_id: requestId,
+                            role: 'assistant',
+                            content: aiResponse,
+                          }
+                        ]);
+                      
+                      // Periodically update the conversation summary
+                      if (audioBuffers.length % 300 === 0) { // Update summary every ~15 seconds
+                        const updatedSummary = await generateConversationSummary(transcriptText);
+                        
+                        await supabaseAdmin
+                          .from('requests')
+                          .update({
+                            summary: updatedSummary,
+                            updated_at: new Date().toISOString()
+                          })
+                          .eq('id', requestId);
+                      }
+                    }
                   }
                 }
+              } catch (error) {
+                console.error('Error processing audio:', error);
               }
             }
-          }
-        } else if (msg.event === 'stop') {
-          console.log('Streaming stopped:', msg);
-          clearInterval(intervalId);
-          
-          // If we have a request ID, make sure to update the summary one last time
-          if (requestId && transcriptText.length > 20) {
-            const finalSummary = await generateConversationSummary(transcriptText);
+          } else if (msg.event === 'stop') {
+            console.log('Streaming stopped:', msg);
+            clearInterval(intervalId);
             
-            await supabaseAdmin
-              .from('requests')
-              .update({
-                summary: finalSummary,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', requestId);
+            // If we have a request ID, make sure to update the summary one last time
+            if (requestId && transcriptText.length > 20) {
+              const finalSummary = await generateConversationSummary(transcriptText);
+              
+              await supabaseAdmin
+                .from('requests')
+                .update({
+                  summary: finalSummary,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', requestId);
+            }
+            
+            socket.close();
           }
-          
-          socket.close();
         }
+      } catch (error) {
+        console.error('Error handling WebSocket message:', error);
       }
-    };
+    });
     
-    socket.onclose = () => {
+    socket.on('close', () => {
       console.log(`WebSocket connection closed for call ${callSid}`);
       clearInterval(intervalId);
-    };
+    });
     
-    socket.onerror = (error) => {
+    socket.on('error', (error: any) => {
       console.error(`WebSocket error for call ${callSid}:`, error);
       clearInterval(intervalId);
-    };
+    });
+  };
+  
+  // Handle upgrade
+  // @ts-ignore - Next.js doesn't expose server property on request socket but it exists
+  const server = (req as any).socket?.server;
+  
+  if (!server?.websocketServer) {
+    // Store the WebSocket server on the Node server instance
+    server.websocketServer = wss;
     
-    return response;
-  } catch (error) {
-    console.error('Error in voice stream handler:', error);
-    return new Response('Internal Server Error', { status: 500 });
+    // Handle upgrade
+    server.on('upgrade', (request: IncomingMessage, socket: Socket, head: Buffer) => {
+      const url = new URL(request.url || '', `http://${request.headers.host}`);
+      const pathname = url.pathname;
+      
+      if (pathname === '/api/voice/stream') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
   }
+  
+  // Set up connection event
+  wss.on('connection', handleConnection);
+
+  // Return a response to acknowledge the WebSocket connection request
+  return new Response(null, { status: 101 });
 } 
