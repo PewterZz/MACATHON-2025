@@ -7,6 +7,9 @@ import { supabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 
+// App URL for sharing
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://meld-git-main-pewterzzs-projects.vercel.app';
+
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -54,31 +57,38 @@ const textToSpeech = async (text: string): Promise<ArrayBuffer> => {
 };
 
 // Store conversation in Weaviate
-const storeInWeaviate = async (callSid: string, transcript: string, aiResponse: string) => {
+const storeInWeaviate = async (callSid: string, transcript: string, aiResponse: string, requestId: number) => {
   return storeConversation({
     className: 'VoiceChat',
     data: {
       callSid,
       transcript,
       aiResponse,
+      requestId: requestId.toString(),
       timestamp: new Date().toISOString()
     }
   });
 };
 
 // Get AI response to user input
-const getAIResponse = async (transcript: string): Promise<string> => {
+const getAIResponse = async (transcript: string, isLongInteraction: boolean = false, referenceCode?: string): Promise<string> => {
   try {
+    const systemContent = isLongInteraction
+      ? `You are a compassionate mental health first responder. 
+         Your role is to provide immediate support, validation, and guidance to someone in distress.
+         Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
+         Tell them their reference code is ${referenceCode || "not available"}, which they can use to continue this conversation on our web platform at ${APP_URL}.
+         Include the reference code and website in your response.
+         Do not identify yourself as an AI - just respond naturally as a supportive listener.`
+      : `You are a compassionate mental health first responder. 
+         Your role is to provide immediate support, validation, and guidance to someone in distress.
+         Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
+         Do not identify yourself as an AI - just respond naturally as a supportive listener.`;
+    
     const response = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
-        {
-          role: "system",
-          content: `You are a compassionate mental health first responder. 
-          Your role is to provide immediate support, validation, and guidance to someone in distress.
-          Keep responses conversational, warm and under 50 words so they can be easily converted to speech.
-          Do not identify yourself as an AI - just respond naturally as a supportive listener.`
-        },
+        { role: "system", content: systemContent },
         { role: "user", content: transcript }
       ],
       temperature: 0.7,
@@ -88,6 +98,9 @@ const getAIResponse = async (transcript: string): Promise<string> => {
     return response.choices[0].message.content || "I'm here to listen and help. Can you tell me more about what's going on?";
   } catch (error) {
     console.error('Error getting AI response:', error);
+    if (isLongInteraction && referenceCode) {
+      return `I'm here to support you. To continue our conversation on our web platform, please use reference code ${referenceCode} at ${APP_URL}.`;
+    }
     return "I'm here to listen. Please tell me what's on your mind.";
   }
 };
@@ -95,14 +108,19 @@ const getAIResponse = async (transcript: string): Promise<string> => {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const callSid = searchParams.get('callSid');
+  const referenceCode = searchParams.get('referenceCode');
   
   if (!callSid) {
     return new Response('Missing CallSid', { status: 400 });
   }
   
+  console.log(`WebSocket stream request for call ${callSid} with reference code ${referenceCode || 'none'}`);
+  
   const audioBuffers: ArrayBuffer[] = [];
   let transcriptText = '';
-  let requestCreated = false;
+  let requestId: string | null = null;
+  let interactionTime = 0;
+  let referenceCodeProvided = false;
   
   try {
     const upgradeHeader = req.headers.get('Upgrade');
@@ -115,6 +133,11 @@ export async function GET(req: NextRequest) {
     socket.onopen = () => {
       console.log(`WebSocket connection established for call ${callSid}`);
     };
+    
+    // Set up an interval to track conversation length
+    const intervalId = setInterval(() => {
+      interactionTime += 5;
+    }, 5000);
     
     socket.onmessage = async (event) => {
       if (typeof event.data === 'string') {
@@ -136,9 +159,69 @@ export async function GET(req: NextRequest) {
             if (newTranscript && newTranscript.length > 0) {
               transcriptText += ' ' + newTranscript;
               
+              // Check if the request already exists or create it
+              if (!requestId) {
+                // Look up the request using callSid
+                const { data: existingRequest } = await supabaseAdmin
+                  .from('requests')
+                  .select('id, reference_code')
+                  .eq('channel', 'phone')
+                  .eq('external_id', callSid)
+                  .maybeSingle();
+                
+                if (existingRequest) {
+                  requestId = existingRequest.id;
+                  console.log(`Found existing request ID: ${requestId}`);
+                } else {
+                  // Create a new request if it doesn't exist yet
+                  const result = await triage(transcriptText);
+                  
+                  const { data: newRequest, error } = await supabaseAdmin
+                    .from('requests')
+                    .insert({
+                      channel: 'phone',
+                      external_id: callSid,
+                      summary: result.summary,
+                      risk: result.risk,
+                      status: result.risk >= 0.7 ? 'urgent' : 'open',
+                      reference_code: referenceCode || null
+                    })
+                    .select()
+                    .single();
+                  
+                  if (error) {
+                    console.error('Error creating request:', error);
+                  } else {
+                    requestId = newRequest.id;
+                    console.log(`Created new request ID: ${requestId}`);
+                  }
+                }
+              }
+              
               // Get AI response once we have enough transcript
-              if (transcriptText.length > 20) {
-                const aiResponse = await getAIResponse(transcriptText);
+              if (transcriptText.length > 20 && requestId) {
+                // Determine if we should provide the reference code based on interaction time
+                const shouldProvideReferenceCode = (interactionTime >= 60 || audioBuffers.length >= 500) && !referenceCodeProvided;
+                
+                let aiResponse;
+                if (shouldProvideReferenceCode) {
+                  // Get the reference code
+                  let code = referenceCode;
+                  if (!code) {
+                    const { data } = await supabaseAdmin
+                      .from('requests')
+                      .select('reference_code')
+                      .eq('id', requestId)
+                      .single();
+                    
+                    code = data?.reference_code;
+                  }
+                  
+                  aiResponse = await getAIResponse(transcriptText, true, code);
+                  referenceCodeProvided = true;
+                } else {
+                  aiResponse = await getAIResponse(transcriptText);
+                }
                 
                 // Convert AI response to speech and send it back
                 const speechBuffer = await textToSpeech(aiResponse);
@@ -155,53 +238,28 @@ export async function GET(req: NextRequest) {
                 }
                 
                 // Store in Weaviate
-                storeInWeaviate(callSid, transcriptText, aiResponse).catch(err => {
-                  console.error('Non-blocking Weaviate storage error:', err);
-                });
-                
-                // Create a request once if not already done
-                if (!requestCreated) {
-                  requestCreated = true;
+                if (requestId) {
+                  storeInWeaviate(callSid, transcriptText, aiResponse, parseInt(requestId)).catch(err => {
+                    console.error('Non-blocking Weaviate storage error:', err);
+                  });
                   
-                  // Analyze with AI
-                  const result = await triage(transcriptText);
-                  
-                  // Create request in database
-                  const { data, error } = await supabaseAdmin
-                    .from('requests')
+                  // Add user message
+                  await supabaseAdmin
+                    .from('messages')
                     .insert({
-                      channel: 'phone',
-                      external_id: callSid,
-                      summary: result.summary,
-                      risk: result.risk,
-                      status: result.risk >= 0.7 ? 'urgent' : 'open'
-                    })
-                    .select()
-                    .single();
+                      request_id: requestId,
+                      sender: 'caller',
+                      content: newTranscript.trim()
+                    });
                   
-                  if (error) {
-                    console.error('Error creating request:', error);
-                  } else {
-                    // Add initial message from caller
-                    await supabaseAdmin
-                      .from('messages')
-                      .insert({
-                        request_id: data.id,
-                        sender: 'caller',
-                        content: transcriptText.trim()
-                      });
-                      
-                    // Add AI response
-                    await supabaseAdmin
-                      .from('messages')
-                      .insert({
-                        request_id: data.id,
-                        sender: 'ai',
-                        content: aiResponse
-                      });
-                      
-                    console.log(`Created request ${data.id} for call ${callSid}`);
-                  }
+                  // Add AI response
+                  await supabaseAdmin
+                    .from('messages')
+                    .insert({
+                      request_id: requestId,
+                      sender: 'ai',
+                      content: aiResponse
+                    });
                 }
               }
             }
@@ -209,6 +267,7 @@ export async function GET(req: NextRequest) {
         } else if (msg.event === 'stop') {
           // Handle end of stream
           console.log('Streaming stopped');
+          clearInterval(intervalId);
           socket.close();
         }
       }
@@ -216,42 +275,77 @@ export async function GET(req: NextRequest) {
     
     socket.onerror = (error) => {
       console.error(`WebSocket error: ${error}`);
+      clearInterval(intervalId);
     };
     
     socket.onclose = async () => {
       console.log(`WebSocket connection closed for call ${callSid}`);
+      clearInterval(intervalId);
       
-      // If we have transcript but no request yet, create one
-      if (transcriptText.length > 0 && !requestCreated) {
-        // Analyze with AI
+      // If we have transcript but no messages saved yet
+      if (transcriptText.length > 0 && !requestId) {
+        // Create a new request if it doesn't exist
         const result = await triage(transcriptText);
         
-        // Create request in database
-        const { data, error } = await supabaseAdmin
+        // Check if a request already exists for this call
+        const { data: existingRequest } = await supabaseAdmin
           .from('requests')
-          .insert({
-            channel: 'phone',
-            external_id: callSid,
-            summary: result.summary,
-            risk: result.risk,
-            status: result.risk >= 0.7 ? 'urgent' : 'open'
-          })
-          .select()
-          .single();
+          .select('id, reference_code')
+          .eq('channel', 'phone')
+          .eq('external_id', callSid)
+          .maybeSingle();
         
-        if (error) {
-          console.error('Error creating request:', error);
-        } else {
+        if (existingRequest) {
+          // Update the existing request
+          await supabaseAdmin
+            .from('requests')
+            .update({
+              summary: result.summary,
+              risk: result.risk,
+              status: result.risk >= 0.7 ? 'urgent' : 'open',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existingRequest.id);
+          
           // Add initial message from caller
           await supabaseAdmin
             .from('messages')
             .insert({
-              request_id: data.id,
+              request_id: existingRequest.id,
               sender: 'caller',
               content: transcriptText.trim()
             });
-            
-          console.log(`Created request ${data.id} for call ${callSid}`);
+          
+          console.log(`Updated and added transcript to request ${existingRequest.id} for call ${callSid}`);
+        } else {
+          // Create a new request
+          const { data, error } = await supabaseAdmin
+            .from('requests')
+            .insert({
+              channel: 'phone',
+              external_id: callSid,
+              summary: result.summary,
+              risk: result.risk,
+              status: result.risk >= 0.7 ? 'urgent' : 'open',
+              reference_code: referenceCode || null
+            })
+            .select()
+            .single();
+          
+          if (error) {
+            console.error('Error creating request:', error);
+          } else {
+            // Add initial message from caller
+            await supabaseAdmin
+              .from('messages')
+              .insert({
+                request_id: data.id,
+                sender: 'caller',
+                content: transcriptText.trim()
+              });
+              
+            console.log(`Created request ${data.id} for call ${callSid}`);
+          }
         }
       }
     };

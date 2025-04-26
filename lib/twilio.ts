@@ -1,5 +1,6 @@
 // Mark this file as server-only to prevent client-side inclusion
 import 'server-only'
+import { randomUUID } from 'crypto';
 
 // Using a more dynamic approach to instantiate Twilio client to avoid build issues
 const createTwilioClient = () => {
@@ -34,6 +35,12 @@ export const twilioNumber = process.env.TWILIO_NUMBER || '';
 if (!twilioNumber) {
   console.warn('TWILIO_NUMBER environment variable is not set');
 }
+
+// Generate a unique reference code
+export const generateReferenceCode = () => {
+  // Generate a 6-character alphanumeric code
+  return randomUUID().substring(0, 6).toUpperCase();
+};
 
 // Helper function to send an SMS
 export const sendSMS = async (to: string, body: string) => {
@@ -76,11 +83,15 @@ export const sendWhatsApp = async (to: string, body: string) => {
 };
 
 // Generate TwiML for voice streaming
-export const generateStreamTwiML = (websocketUrl: string) => {
+export const generateStreamTwiML = (websocketUrl: string, referenceCode?: string) => {
+  const welcomeMessage = referenceCode 
+    ? `Welcome to Mind Meld Peer Assist. Your reference code is ${referenceCode.split('').join(' ')}. Please share what's on your mind, and we'll connect you with a peer supporter.`
+    : `Welcome to Mind Meld Peer Assist. Please share what's on your mind, and we'll connect you with a peer supporter.`;
+
   return `
     <?xml version="1.0" encoding="UTF-8"?>
     <Response>
-      <Say>Welcome to Mind Meld Peer Assist. Please share what's on your mind, and we'll connect you with a peer supporter.</Say>
+      <Say>${welcomeMessage}</Say>
       <Connect>
         <Stream url="${websocketUrl}" />
       </Connect>
