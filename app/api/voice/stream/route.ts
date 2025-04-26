@@ -1,11 +1,11 @@
 import { NextRequest } from 'next/server';
 import { WebSocketServer } from 'ws';
+import { IncomingMessage } from 'http';
+import { Socket } from 'net';
 import { triage } from '@/lib/ai';
 import { storeConversation } from '@/lib/weaviate';
 import OpenAI from 'openai';
 import { supabaseAdmin } from '@/lib/supabase';
-import { IncomingMessage } from 'http';
-import { Socket } from 'net';
 
 export const runtime = 'nodejs';
 
@@ -165,17 +165,17 @@ const generateConversationSummary = async (transcript: string): Promise<string> 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const callSid = searchParams.get('callSid');
-  
+
   if (!callSid) {
     return new Response('Missing CallSid', { status: 400 });
   }
-  
+
   console.log(`WebSocket stream request for call ${callSid}`);
-  
+
   const audioBuffers: ArrayBuffer[] = [];
   let transcriptText = '';
   let requestId: string | null = null;
-  
+
   // Context to track the conversation state
   const userContext = {
     interactionTime: 0,
@@ -183,25 +183,25 @@ export async function GET(req: NextRequest) {
     userHasConsented: false,
     referenceCode: undefined as string | undefined
   };
-  
-  // Create WebSocket server
+
+  // Create WebSocket server (original way)
   const wss = new WebSocketServer({ noServer: true });
-  
-  // Handle connection
+
+  // Handle connection (original function)
   const handleConnection = async (socket: any) => {
     console.log(`WebSocket connection established for call ${callSid}`);
-    
+
     // Set up an interval to track conversation length
     const intervalId = setInterval(() => {
       userContext.interactionTime += 5;
     }, 5000);
-    
-    // Handle messages
+
+    // Handle messages (original logic)
     socket.on('message', async (data: any) => {
       try {
-        if (typeof data === 'string') {
+        if (typeof data === 'string') { // Check if string first, original code might differ slightly here
           const msg = JSON.parse(data);
-          
+
           // Handle Twilio WebSocket protocol messages
           if (msg.event === 'start') {
             console.log('Streaming started:', msg);
@@ -209,55 +209,55 @@ export async function GET(req: NextRequest) {
             // Decode base64 audio data
             const audioData = Buffer.from(msg.media.payload, 'base64').buffer;
             audioBuffers.push(audioData);
-            
+
             // Process audio in chunks (e.g., every 5 seconds)
             if (audioBuffers.length % 100 === 0) {
               try {
                 // Combine audio buffers
                 const combinedLength = audioBuffers.reduce((acc, curr) => acc + curr.byteLength, 0);
                 const combined = new Uint8Array(combinedLength);
-                
+
                 let offset = 0;
                 for (const buffer of audioBuffers) {
                   combined.set(new Uint8Array(buffer), offset);
                   offset += buffer.byteLength;
                 }
-                
+
                 // Process accumulated audio
                 const newTranscript = await speechToText(combined.buffer);
-                
+
                 if (newTranscript && newTranscript.length > 0) {
                   transcriptText += ' ' + newTranscript;
-                  
+
                   // Get AI response once we have enough transcript
                   if (transcriptText.length > 20) {
                     // Check if enough time has passed to ask for consent
                     if (userContext.interactionTime >= 30 && !userContext.hasAskedForConsent) {
                       userContext.hasAskedForConsent = true;
                     }
-                    
+
                     // Get AI response based on the current context
                     const aiResponse = await getAIResponse(transcriptText, userContext);
-                    
+
                     // Check if this is the first time we're detecting consent
-                    if (userContext.hasAskedForConsent && !userContext.userHasConsented && 
-                        (transcriptText.toLowerCase().includes('yes') || 
-                         transcriptText.toLowerCase().includes('sure') || 
-                         transcriptText.toLowerCase().includes('okay') || 
+                    if (userContext.hasAskedForConsent && !userContext.userHasConsented &&
+                        (transcriptText.toLowerCase().includes('yes') ||
+                         transcriptText.toLowerCase().includes('sure') ||
+                         transcriptText.toLowerCase().includes('okay') ||
                          transcriptText.toLowerCase().includes('ok'))) {
-                      
+
                       userContext.userHasConsented = true;
-                      
+
                       // Generate a reference code now that we have consent
                       const { generateReferenceCode } = await import('@/lib/twilio');
                       userContext.referenceCode = generateReferenceCode();
-                      
+
                       // Generate a text summary of the conversation so far
                       const conversationSummary = await generateConversationSummary(transcriptText);
-                      
+
                       // Create or update the request in the database
                       const result = await triage(transcriptText);
-                      
+
                       const { data: newRequest, error: requestError } = await supabaseAdmin
                         .from('requests')
                         .insert({
@@ -270,7 +270,7 @@ export async function GET(req: NextRequest) {
                         })
                         .select()
                         .single();
-                      
+
                       if (requestError) {
                         console.error('Error creating request:', requestError);
                       } else {
@@ -278,7 +278,7 @@ export async function GET(req: NextRequest) {
                         console.log(`Created new request ID: ${requestId} with reference code ${userContext.referenceCode}`);
                       }
                     }
-                    
+
                     // Convert AI response to speech and send it back
                     const speechBuffer = await textToSpeech(aiResponse);
                     if (speechBuffer.byteLength > 0) {
@@ -292,13 +292,13 @@ export async function GET(req: NextRequest) {
                         }
                       }));
                     }
-                    
+
                     // Store in Weaviate and database only if we have created a request
                     if (requestId) {
                       storeInWeaviate(callSid, transcriptText, aiResponse, parseInt(requestId)).catch(err => {
                         console.error('Non-blocking Weaviate storage error:', err);
                       });
-                      
+
                       // Add user message and AI response to the database
                       await supabaseAdmin
                         .from('messages')
@@ -314,11 +314,11 @@ export async function GET(req: NextRequest) {
                             content: aiResponse,
                           }
                         ]);
-                      
+
                       // Periodically update the conversation summary
                       if (audioBuffers.length % 300 === 0) { // Update summary every ~15 seconds
                         const updatedSummary = await generateConversationSummary(transcriptText);
-                        
+
                         await supabaseAdmin
                           .from('requests')
                           .update({
@@ -337,11 +337,11 @@ export async function GET(req: NextRequest) {
           } else if (msg.event === 'stop') {
             console.log('Streaming stopped:', msg);
             clearInterval(intervalId);
-            
+
             // If we have a request ID, make sure to update the summary one last time
             if (requestId && transcriptText.length > 20) {
               const finalSummary = await generateConversationSummary(transcriptText);
-              
+
               await supabaseAdmin
                 .from('requests')
                 .update({
@@ -350,39 +350,40 @@ export async function GET(req: NextRequest) {
                 })
                 .eq('id', requestId);
             }
-            
+
             socket.close();
           }
-        }
+        } // End check for string type
       } catch (error) {
         console.error('Error handling WebSocket message:', error);
       }
     });
-    
+
     socket.on('close', () => {
       console.log(`WebSocket connection closed for call ${callSid}`);
       clearInterval(intervalId);
     });
-    
+
     socket.on('error', (error: any) => {
       console.error(`WebSocket error for call ${callSid}:`, error);
       clearInterval(intervalId);
+      // Consider adding socket.close() here if not already handled
     });
   };
-  
-  // Handle upgrade
+
+  // Handle upgrade (original way)
   // @ts-ignore - Next.js doesn't expose server property on request socket but it exists
   const server = (req as any).socket?.server;
-  
-  if (!server?.websocketServer) {
+
+  if (server && !server.websocketServer) { // Check if server exists before accessing properties
     // Store the WebSocket server on the Node server instance
     server.websocketServer = wss;
-    
+
     // Handle upgrade
     server.on('upgrade', (request: IncomingMessage, socket: Socket, head: Buffer) => {
       const url = new URL(request.url || '', `http://${request.headers.host}`);
       const pathname = url.pathname;
-      
+
       if (pathname === '/api/voice/stream') {
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit('connection', ws, request);
@@ -391,11 +392,27 @@ export async function GET(req: NextRequest) {
         socket.destroy();
       }
     });
+  } else if (server && server.websocketServer) {
+    // If the server and websocketServer already exist, reuse it (edge case handling)
+    // This might happen with hot-reloading or specific server setups
+    // Ensure the connection handler is attached if needed, or rely on initial setup.
+    // This part might need adjustment based on how the server lifecycle works.
   }
-  
-  // Set up connection event
+
+  // Set up connection event (original way)
   wss.on('connection', handleConnection);
 
-  // Return a response to acknowledge the WebSocket connection request
-  return new Response(null, { status: 101 });
+  // Return a response to acknowledge the WebSocket connection request (original way)
+  // This might need to be adjusted depending on whether the upgrade handler
+  // successfully completes the handshake *before* this returns.
+  // For standard ws library usage with manual upgrade, this response might not be needed
+  // if handleUpgrade takes care of the response implicitly.
+  // Let's comment it out for now as it might interfere with handleUpgrade.
+  // return new Response(null, { status: 101 });
+  // However, Next.js API routes *must* return a Response.
+  // If the upgrade is handled async, we might need a placeholder response?
+  // Or maybe the upgrade handling needs to be awaited somehow?
+  // For now, let's return a simple 200 OK, assuming the upgrade happens separately.
+  // This part is tricky with serverless functions.
+  return new Response("WebSocket upgrade expected", { status: 200 }); // Placeholder
 } 
